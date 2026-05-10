@@ -4,7 +4,9 @@ import {
   ArrowDown,
   ArrowUp,
   CalendarCheck,
+  CloudOff,
   ClipboardCheck,
+  Database,
   Edit3,
   FileText,
   History,
@@ -17,9 +19,19 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
+import { isSupabaseConfigured } from "./supabaseClient";
+import { deleteStandardFromRemote, loadRemoteState, saveStandardsToRemote, saveSystemOptionsToRemote } from "./sopRepository";
 
 const WORK_TYPES = ["점검", "교체", "운전", "기타"];
 const DEFAULT_SYSTEMS = ["용수", "에어", "산소/질소", "DIW", "배관", "시설물", "전기", "공조", "기타"];
+const LEGACY_SYSTEM_LABELS = {
+  냉각수: "용수",
+  스팀: "배관",
+  압축공기: "에어",
+  HVAC: "공조",
+  수처리: "DIW",
+  계장: "기타",
+};
 const SHUTDOWN_MODES = ["운전 중 가능", "예비기 전환 후 가능", "부분정지 필요", "전체정지 필요"];
 const PERMIT_OPTIONS = ["불필요", "일반작업허가", "화기작업허가", "밀폐공간허가", "전기작업허가", "고소작업허가"];
 const LOTO_OPTIONS = ["불필요", "필요", "조건부 필요"];
@@ -500,31 +512,52 @@ function moveRow(list, id, direction) {
 
 function normalizeSystemOptions(options) {
   const source = Array.isArray(options) && options.length ? options : DEFAULT_SYSTEMS;
-  const normalized = [...new Set(source.map((item) => String(item || "").trim()).filter(Boolean))];
+  const normalized = [...new Set(source.map((item) => LEGACY_SYSTEM_LABELS[String(item || "").trim()] || String(item || "").trim()).filter(Boolean))];
   return normalized.length ? normalized : ["기타"];
 }
 
+function normalizeWorkType(value, title = "") {
+  if (WORK_TYPES.includes(value)) return value;
+  if (title.includes("교체")) return "교체";
+  if (title.includes("운전")) return "운전";
+  if (title.includes("점검") || title.includes("원인")) return "점검";
+  return "기타";
+}
+
+function normalizeSystemValue(value) {
+  return LEGACY_SYSTEM_LABELS[value] || value || "기타";
+}
+
+function normalizeFormValues(form) {
+  const next = { ...form };
+  next.workType = normalizeWorkType(next.workType, next.title);
+  next.system = normalizeSystemValue(next.system);
+  return next;
+}
+
 function makeRevision(form, draft, savedAt, summary) {
+  const normalizedForm = normalizeFormValues(form);
   return {
-    id: `${form.rev || "Rev.01"}-${savedAt}`,
-    rev: form.rev || "Rev.01",
+    id: `${normalizedForm.rev || "Rev.01"}-${savedAt}`,
+    rev: normalizedForm.rev || "Rev.01",
     savedAt,
-    author: form.author || "",
+    author: normalizedForm.author || "",
     summary,
-    form: { ...form },
+    form: normalizedForm,
     draft: normalizeDraft(draft),
   };
 }
 
 function normalizeRevision(revision) {
+  const form = normalizeFormValues({ ...defaultForm, ...revision.form, rev: revision.rev || revision.form?.rev || "Rev.01" });
   return {
     ...revision,
     id: revision.id || `${revision.rev || "Rev.01"}-${revision.savedAt || makeId()}`,
-    rev: revision.rev || revision.form?.rev || "Rev.01",
+    rev: form.rev || revision.rev || "Rev.01",
     savedAt: revision.savedAt || new Date().toISOString(),
-    author: revision.author || revision.form?.author || "",
+    author: revision.author || form.author || "",
     summary: revision.summary || "이력 등록",
-    form: { ...defaultForm, ...revision.form, rev: revision.rev || revision.form?.rev || "Rev.01" },
+    form,
     draft: normalizeDraft(revision.draft || emptyDraft),
   };
 }
@@ -563,19 +596,20 @@ function summarizeChange(previous, nextForm, nextDraft) {
 function makeStandardRecord(form, draft, id, options = {}) {
   const now = options.savedAt || new Date().toISOString();
   const previous = options.previous;
+  const normalizedForm = normalizeFormValues(form);
   const normalizedDraft = normalizeDraft(draft);
-  const revision = makeRevision(form, normalizedDraft, now, options.summary || summarizeChange(previous, form, normalizedDraft));
+  const revision = makeRevision(normalizedForm, normalizedDraft, now, options.summary || summarizeChange(previous, normalizedForm, normalizedDraft));
   const previousRevisions = previous ? getRevisionHistory(previous) : [];
   const revisions = [...previousRevisions.filter((item) => item.rev !== revision.rev), revision];
   return {
     id: id || makeId(),
-    title: form.title || "작업명 미입력",
-    tag: form.tag || "",
-    equipment: form.equipment || "",
-    system: form.system || "",
-    rev: form.rev || "Rev.01",
+    title: normalizedForm.title || "작업명 미입력",
+    tag: normalizedForm.tag || "",
+    equipment: normalizedForm.equipment || "",
+    system: normalizedForm.system || "",
+    rev: normalizedForm.rev || "Rev.01",
     savedAt: now,
-    form: { ...form },
+    form: normalizedForm,
     draft: normalizedDraft,
     revisions,
   };
@@ -605,14 +639,14 @@ function mergeExampleStandards(savedStandards) {
 
 function syncExistingExampleStandards(savedStandards) {
   return savedStandards.map((standard) => {
-    const form = { ...defaultForm, ...standard.form, rev: standard.rev || standard.form?.rev || "Rev.01" };
+    const form = normalizeFormValues({ ...defaultForm, ...standard.form, rev: standard.rev || standard.form?.rev || "Rev.01" });
     const draft = normalizeDraft(standard.draft || emptyDraft);
     return {
       ...standard,
       title: standard.title || form.title || "작업명 미입력",
-      tag: standard.tag || form.tag || "",
-      equipment: standard.equipment || form.equipment || "",
-      system: standard.system || form.system || "",
+      tag: form.tag || standard.tag || "",
+      equipment: form.equipment || standard.equipment || "",
+      system: form.system || standard.system || "",
       rev: standard.rev || form.rev || "Rev.01",
       savedAt: standard.savedAt || new Date().toISOString(),
       form,
@@ -645,6 +679,50 @@ function standardSignature(form, draft) {
     form: versionedForm,
     draft: stripIds(normalizeDraft(draft)),
   });
+}
+
+function makeEmptyRuntimeState() {
+  return {
+    form: makeBlankForm(),
+    draft: normalizeDraft(emptyDraft),
+    docTab: "standard",
+    standards: mergeExampleStandards([]),
+    activeStandardId: null,
+    examplesSeeded: true,
+    systemOptions: DEFAULT_SYSTEMS,
+  };
+}
+
+function readLocalState() {
+  const fallback = makeEmptyRuntimeState();
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (!saved) return fallback;
+
+  try {
+    const parsed = JSON.parse(saved);
+    const parsedStandards = syncExistingExampleStandards(parsed.standards || []);
+    const seeded = Boolean(parsed.examplesSeeded);
+    return {
+      ...fallback,
+      standards: seeded ? parsedStandards : mergeExampleStandards(parsedStandards),
+      systemOptions: normalizeSystemOptions(parsed.systemOptions),
+    };
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
+    return fallback;
+  }
+}
+
+function buildRemoteRuntimeState(remoteState, localState) {
+  const remoteStandards = syncExistingExampleStandards(remoteState.standards || []);
+  const localStandards = syncExistingExampleStandards(localState.standards || []);
+  const sourceStandards = remoteStandards.length ? remoteStandards : localStandards;
+
+  return {
+    ...makeEmptyRuntimeState(),
+    standards: mergeExampleStandards(sourceStandards),
+    systemOptions: normalizeSystemOptions(remoteState.systemOptions || localState.systemOptions),
+  };
 }
 
 function formatDateTime(value) {
@@ -745,7 +823,23 @@ function SystemOptionsEditor({ options, selected, newValue, onNewValueChange, on
   );
 }
 
-function StepRail({ currentStep, setCurrentStep, isDraftReady, standardsCount }) {
+function StorageStatus({ mode, message }) {
+  const isRemote = mode === "remote";
+  const isLoading = mode === "loading";
+  const Icon = isRemote ? Database : CloudOff;
+
+  return (
+    <div className={`storage-status ${isRemote ? "remote" : ""} ${isLoading ? "loading" : ""}`}>
+      <Icon size={15} />
+      <div>
+        <strong>{isLoading ? "저장소 확인 중" : isRemote ? "Supabase 저장" : "로컬 임시 저장"}</strong>
+        <p>{message}</p>
+      </div>
+    </div>
+  );
+}
+
+function StepRail({ currentStep, setCurrentStep, isDraftReady, standardsCount, storageMode, storageMessage }) {
   const steps = ["표준서 보관함", "기본 정보", "작업 조건", "초안 생성", "상세 편집", "오늘 작업 출력"];
 
   return (
@@ -776,6 +870,8 @@ function StepRail({ currentStep, setCurrentStep, isDraftReady, standardsCount })
           <p>{isDraftReady ? "저장 후 오늘 작업 문서를 바로 출력할 수 있습니다." : "보관된 표준서를 선택하거나 새로 작성하세요."}</p>
         </div>
       </div>
+
+      <StorageStatus mode={storageMode} message={storageMessage} />
     </aside>
   );
 }
@@ -1283,44 +1379,75 @@ export default function App() {
   const [newSystemOption, setNewSystemOption] = useState("");
   const [examplesSeeded, setExamplesSeeded] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [storageMode, setStorageMode] = useState(isSupabaseConfigured ? "loading" : "local");
+  const [storageMessage, setStorageMessage] = useState(isSupabaseConfigured ? "Supabase 연결을 확인하고 있습니다." : "Supabase 환경변수가 없어 브라우저에만 저장됩니다.");
 
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setForm(makeBlankForm());
-        setDraft(normalizeDraft(emptyDraft));
-        setDocTab("standard");
-        setSystemOptions(normalizeSystemOptions(parsed.systemOptions));
-        const parsedStandards = parsed.standards || [];
-        const seeded = Boolean(parsed.examplesSeeded);
-        const syncedStandards = syncExistingExampleStandards(parsedStandards);
-        setStandards(seeded ? syncedStandards : mergeExampleStandards(syncedStandards));
-        setActiveStandardId(null);
-        setExamplesSeeded(true);
-      } catch {
-        localStorage.removeItem(STORAGE_KEY);
-        setForm(makeBlankForm());
-        setDraft(normalizeDraft(emptyDraft));
-        setSystemOptions(DEFAULT_SYSTEMS);
-        setStandards(mergeExampleStandards([]));
-        setExamplesSeeded(true);
+    let isMounted = true;
+
+    const applyState = (nextState) => {
+      setForm(nextState.form);
+      setDraft(nextState.draft);
+      setDocTab(nextState.docTab);
+      setStandards(nextState.standards);
+      setActiveStandardId(nextState.activeStandardId);
+      setExamplesSeeded(nextState.examplesSeeded);
+      setSystemOptions(nextState.systemOptions);
+    };
+
+    async function loadInitialState() {
+      const localState = readLocalState();
+
+      if (!isSupabaseConfigured) {
+        applyState(localState);
+        setStorageMode("local");
+        setStorageMessage("Supabase 환경변수가 없어 브라우저에만 저장됩니다.");
+        setLoaded(true);
+        return;
       }
-    } else {
-      setForm(makeBlankForm());
-      setDraft(normalizeDraft(emptyDraft));
-      setSystemOptions(DEFAULT_SYSTEMS);
-      setStandards(mergeExampleStandards([]));
-      setExamplesSeeded(true);
+
+      try {
+        const remoteState = await loadRemoteState();
+        if (!isMounted) return;
+        applyState(buildRemoteRuntimeState(remoteState, localState));
+        setStorageMode("remote");
+        setStorageMessage("Supabase와 연결되었습니다.");
+      } catch (error) {
+        if (!isMounted) return;
+        applyState(localState);
+        setStorageMode("local");
+        setStorageMessage(`Supabase 테이블 확인이 필요합니다. 현재는 브라우저에 임시 저장됩니다. (${error.message})`);
+      }
+      setLoaded(true);
     }
-    setLoaded(true);
+
+    loadInitialState();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
     if (!loaded) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ form, draft, docTab, standards, activeStandardId, examplesSeeded, systemOptions }));
   }, [form, draft, docTab, standards, activeStandardId, examplesSeeded, systemOptions, loaded]);
+
+  useEffect(() => {
+    if (!loaded || storageMode !== "remote") return undefined;
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        await Promise.all([saveStandardsToRemote(standards), saveSystemOptionsToRemote(systemOptions)]);
+        setStorageMessage(`Supabase 동기화 완료 · ${formatDateTime(new Date().toISOString())}`);
+      } catch (error) {
+        setStorageMode("local");
+        setStorageMessage(`Supabase 저장 실패로 로컬 임시 저장으로 전환했습니다. (${error.message})`);
+      }
+    }, 700);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [standards, systemOptions, loaded, storageMode]);
 
   const isDraftReady = draft.steps.length > 0 || draft.preChecks.length > 0;
   const activeStandard = standards.find((standard) => standard.id === activeStandardId);
@@ -1357,7 +1484,7 @@ export default function App() {
   };
 
   const loadStandard = (standard, mode) => {
-    const loadedForm = { ...defaultForm, ...standard.form };
+    const loadedForm = normalizeFormValues({ ...defaultForm, ...standard.form });
     if (mode === "today") {
       loadedForm.date = new Date().toISOString().slice(0, 10);
     }
@@ -1379,9 +1506,10 @@ export default function App() {
   };
 
   const loadRevision = (revision) => {
-    setForm({ ...defaultForm, ...revision.form });
-    if (revision.form?.system && !systemOptions.includes(revision.form.system)) {
-      setSystemOptions((prev) => normalizeSystemOptions([revision.form.system, ...prev]));
+    const revisionForm = normalizeFormValues({ ...defaultForm, ...revision.form });
+    setForm(revisionForm);
+    if (revisionForm.system && !systemOptions.includes(revisionForm.system)) {
+      setSystemOptions((prev) => normalizeSystemOptions([revisionForm.system, ...prev]));
     }
     setDraft(normalizeDraft(revision.draft || emptyDraft));
     setSelectedRevisionRev(revision.rev);
@@ -1443,6 +1571,11 @@ export default function App() {
   const deleteStandard = (id) => {
     setStandards((prev) => prev.filter((standard) => standard.id !== id));
     if (activeStandardId === id) setActiveStandardId(null);
+    if (storageMode === "remote") {
+      deleteStandardFromRemote(id)
+        .then(() => setStorageMessage("Supabase에서 표준서를 삭제했습니다."))
+        .catch((error) => setStorageMessage(`Supabase 삭제 실패: ${error.message}`));
+    }
   };
 
   const updateRows = (key, id, field, value) => {
@@ -1486,7 +1619,14 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <StepRail currentStep={currentStep} setCurrentStep={setCurrentStep} isDraftReady={isDraftReady} standardsCount={standards.length} />
+      <StepRail
+        currentStep={currentStep}
+        setCurrentStep={setCurrentStep}
+        isDraftReady={isDraftReady}
+        standardsCount={standards.length}
+        storageMode={storageMode}
+        storageMessage={storageMessage}
+      />
 
       <main className="main">
         <header className="topbar">
