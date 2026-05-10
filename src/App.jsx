@@ -993,7 +993,7 @@ function StorageStatus({ mode, message }) {
     <div className={`storage-status ${isRemote ? "remote" : ""} ${isLoading ? "loading" : ""}`}>
       <Icon size={15} />
       <div>
-        <strong>{isLoading ? "저장소 확인 중" : isRemote ? "Supabase 저장" : "로컬 임시 저장"}</strong>
+        <strong>{isLoading ? "저장소 확인 중" : isRemote ? "Supabase 저장" : "브라우저 저장"}</strong>
         <p>{message}</p>
       </div>
     </div>
@@ -1001,7 +1001,27 @@ function StorageStatus({ mode, message }) {
 }
 
 function StepRail({ currentStep, setCurrentStep, isDraftReady, standardsCount, workRecordsCount, storageMode, storageMessage }) {
-  const steps = ["오늘 업무 기록", "작업기록함", "유사작업 분석", "SOP 보관함", "기본 정보", "작업 조건", "초안 생성", "상세 편집", "출력"];
+  const navGroups = [
+    {
+      title: "SOP 관리",
+      items: [
+        { index: 3, number: 1, label: "SOP 보관함" },
+        { index: 4, number: 2, label: "기본 정보" },
+        { index: 5, number: 3, label: "작업 조건" },
+        { index: 6, number: 4, label: "초안 생성" },
+        { index: 7, number: 5, label: "상세 편집" },
+        { index: 8, number: 6, label: "출력" },
+      ],
+    },
+    {
+      title: "SOP 개선 재료",
+      items: [
+        { index: 0, number: 7, label: "오늘 업무 기록" },
+        { index: 1, number: 8, label: "작업기록함" },
+        { index: 2, number: 9, label: "SOP 후보 분석" },
+      ],
+    },
+  ];
 
   return (
     <aside className="sidebar">
@@ -1011,24 +1031,29 @@ function StepRail({ currentStep, setCurrentStep, isDraftReady, standardsCount, w
       </div>
 
       <nav className="steps">
-        {steps.map((step, index) => (
-          <button
-            key={step}
-            className={`step-button ${currentStep === index ? "active" : ""} ${index < currentStep ? "done" : ""}`}
-            onClick={() => setCurrentStep(index)}
-            type="button"
-          >
-            <span>{index < currentStep ? "✓" : index + 1}</span>
-            {step}
-          </button>
+        {navGroups.map((group) => (
+          <div className="step-group" key={group.title}>
+            <div className="step-group-label">{group.title}</div>
+            {group.items.map((item) => (
+              <button
+                key={item.label}
+                className={`step-button ${currentStep === item.index ? "active" : ""}`}
+                onClick={() => setCurrentStep(item.index)}
+                type="button"
+              >
+                <span>{item.number}</span>
+                {item.label}
+              </button>
+            ))}
+          </div>
         ))}
       </nav>
 
       <div className={`status-box ${isDraftReady ? "ready" : ""}`}>
         <Sparkles size={16} />
         <div>
-          <strong>{isDraftReady ? "SOP 편집 중" : `${workRecordsCount}건 기록 · ${standardsCount}건 SOP`}</strong>
-          <p>{isDraftReady ? "저장 후 오늘 작업 문서를 바로 출력할 수 있습니다." : "기록을 쌓고 반복 업무를 SOP로 승격하세요."}</p>
+          <strong>{isDraftReady ? "SOP 편집 중" : `${standardsCount}건 SOP · ${workRecordsCount}건 기록`}</strong>
+          <p>{isDraftReady ? "저장 후 오늘 작업 문서를 바로 출력할 수 있습니다." : "SOP가 중심이고, 기록은 후보와 개정 재료로 활용합니다."}</p>
         </div>
       </div>
 
@@ -1114,7 +1139,7 @@ function WorkRecordLibrary({ records, onEdit, onDelete }) {
       <div className="library-intro">
         <div>
           <h3>하루하루의 작업을 표준서 후보 재료로 보관합니다.</h3>
-          <p>기록이 쌓이면 유사작업 분석에서 반복 패턴을 찾아 SOP 후보로 만들 수 있습니다.</p>
+          <p>기록이 쌓이면 SOP 후보 분석에서 반복 패턴을 찾아 신규 SOP나 개정 후보로 만들 수 있습니다.</p>
         </div>
       </div>
       {records.length === 0 ? (
@@ -1154,7 +1179,7 @@ function WorkRecordLibrary({ records, onEdit, onDelete }) {
 
 function WorkAnalysisPanel({ groups, recordsCount, onPromote }) {
   return (
-    <Section title="유사작업 분석" icon={Sparkles}>
+    <Section title="SOP 후보 분석" icon={Sparkles}>
       <div className="analysis-summary">
         <div>
           <span>누적 작업기록</span>
@@ -1687,7 +1712,7 @@ function DocFooter({ form, label = "작업 표준서" }) {
 }
 
 export default function App() {
-  const [currentStep, setCurrentStep] = useState(0);
+  const [currentStep, setCurrentStep] = useState(3);
   const [form, setForm] = useState(makeBlankForm);
   const [draft, setDraft] = useState(normalizeDraft(emptyDraft));
   const [docTab, setDocTab] = useState("standard");
@@ -1704,7 +1729,9 @@ export default function App() {
   const [examplesSeeded, setExamplesSeeded] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [storageMode, setStorageMode] = useState(isSupabaseConfigured ? "loading" : "local");
-  const [storageMessage, setStorageMessage] = useState(isSupabaseConfigured ? "Supabase 연결을 확인하고 있습니다." : "Supabase 환경변수가 없어 브라우저에만 저장됩니다.");
+  const [storageMessage, setStorageMessage] = useState(
+    isSupabaseConfigured ? "공용 데이터 저장소 연결을 확인하고 있습니다." : "공용 저장소 연결값이 없어 이 브라우저에만 저장됩니다.",
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -1726,7 +1753,7 @@ export default function App() {
       if (!isSupabaseConfigured) {
         applyState(localState);
         setStorageMode("local");
-        setStorageMessage("Supabase 환경변수가 없어 브라우저에만 저장됩니다.");
+        setStorageMessage("공용 저장소 연결값이 없어 이 브라우저에만 저장됩니다.");
         setLoaded(true);
         return;
       }
@@ -1741,7 +1768,7 @@ export default function App() {
         if (!isMounted) return;
         applyState(localState);
         setStorageMode("local");
-        setStorageMessage(`Supabase 테이블 확인이 필요합니다. 현재는 브라우저에 임시 저장됩니다. (${error.message})`);
+        setStorageMessage(`공용 저장소 연결 확인이 필요합니다. 지금은 이 브라우저에만 저장됩니다. (${error.message})`);
       }
       setLoaded(true);
     }
@@ -1767,7 +1794,7 @@ export default function App() {
         setStorageMessage(`Supabase 동기화 완료 · ${formatDateTime(new Date().toISOString())}`);
       } catch (error) {
         setStorageMode("local");
-        setStorageMessage(`Supabase 저장 실패로 로컬 임시 저장으로 전환했습니다. (${error.message})`);
+        setStorageMessage(`공용 저장소 저장 실패로 브라우저 저장으로 전환했습니다. (${error.message})`);
       }
     }, 700);
 
@@ -1847,7 +1874,7 @@ export default function App() {
     });
     setWorkRecordForm(makeBlankWorkRecord());
     setActiveWorkRecordId(null);
-    setWorkRecordMessage("작업기록을 저장했습니다. 유사작업 분석에 바로 반영됩니다.");
+    setWorkRecordMessage("작업기록을 저장했습니다. SOP 후보 분석에 바로 반영됩니다.");
   };
 
   const editWorkRecord = (record) => {
@@ -2032,13 +2059,13 @@ export default function App() {
             <h2>{form.title || "작업표준서 생성기"}</h2>
           </div>
           <div className="topbar-actions">
-            <button type="button" className="button ghost" onClick={() => setCurrentStep(0)}>
-              <CalendarCheck size={16} />
-              업무기록
-            </button>
             <button type="button" className="button ghost" onClick={() => setCurrentStep(3)}>
               <Library size={16} />
               SOP 보관함
+            </button>
+            <button type="button" className="button ghost" onClick={() => setCurrentStep(0)}>
+              <CalendarCheck size={16} />
+              오늘 기록
             </button>
             <button type="button" className="button ghost" onClick={saveStandard} disabled={!isDraftReady}>
               <Save size={16} />
