@@ -20,7 +20,14 @@ import {
   Trash2,
 } from "lucide-react";
 import { isSupabaseConfigured } from "./supabaseClient";
-import { deleteStandardFromRemote, loadRemoteState, saveStandardsToRemote, saveSystemOptionsToRemote } from "./sopRepository";
+import {
+  deleteStandardFromRemote,
+  deleteWorkRecordFromRemote,
+  loadRemoteState,
+  saveStandardsToRemote,
+  saveSystemOptionsToRemote,
+  saveWorkRecordsToRemote,
+} from "./sopRepository";
 
 const WORK_TYPES = ["점검", "교체", "운전", "기타"];
 const DEFAULT_SYSTEMS = ["용수", "에어", "산소/질소", "DIW", "배관", "시설물", "전기", "공조", "기타"];
@@ -173,6 +180,35 @@ function makeBlankForm() {
     toolsText: "",
     sparesText: "",
     notes: "",
+  };
+}
+
+function makeUuid() {
+  return globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function makeBlankWorkRecord() {
+  return {
+    id: "",
+    workDate: new Date().toISOString().slice(0, 10),
+    title: "",
+    workType: "점검",
+    equipment: "",
+    tag: "",
+    system: "용수",
+    team: "유틸리티P",
+    author: "",
+    shutdownMode: "운전 중 가능",
+    symptom: "",
+    cause: "",
+    action: "",
+    result: "",
+    risks: [],
+    notes: "",
+    standardId: "",
+    standardRev: "",
+    status: "recorded",
+    savedAt: "",
   };
 }
 
@@ -535,6 +571,128 @@ function normalizeFormValues(form) {
   return next;
 }
 
+function normalizeWorkRecord(record) {
+  const base = { ...makeBlankWorkRecord(), ...record };
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return {
+    ...base,
+    id: uuidPattern.test(base.id) ? base.id : makeUuid(),
+    workType: normalizeWorkType(base.workType, base.title),
+    system: normalizeSystemValue(base.system),
+    risks: Array.isArray(base.risks) ? base.risks.filter((risk) => RISK_OPTIONS.includes(risk)) : [],
+    savedAt: base.savedAt || new Date().toISOString(),
+  };
+}
+
+function keywordTokens(value) {
+  return String(value || "")
+    .split(/[\s,./·|()[\]{}:;!?~+-]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2)
+    .filter((item) => !["점검", "조치", "확인", "작업", "발생", "관련", "원인", "결과"].includes(item));
+}
+
+function mostFrequent(values, fallback = "") {
+  const counts = new Map();
+  values.filter(Boolean).forEach((value) => counts.set(value, (counts.get(value) || 0) + 1));
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || fallback;
+}
+
+function uniqueTextRows(values, limit = 6) {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))].slice(0, limit);
+}
+
+function buildWorkRecordGroups(records, standards) {
+  const groups = new Map();
+
+  records.map(normalizeWorkRecord).forEach((record) => {
+    const titleKeyword = keywordTokens(`${record.title} ${record.symptom}`)[0] || "작업";
+    const equipmentKey = (record.tag || record.equipment || titleKeyword || "설비 미입력").toLowerCase();
+    const key = `${record.system}|${equipmentKey}`;
+    const existing = groups.get(key) || {
+      id: key,
+      system: record.system,
+      equipment: record.equipment,
+      tag: record.tag,
+      keyword: titleKeyword,
+      records: [],
+    };
+    existing.records.push(record);
+    groups.set(key, existing);
+  });
+
+  return [...groups.values()]
+    .map((group) => {
+      const label = group.equipment || group.tag || `${group.system} ${group.keyword}`;
+      const tokens = new Set(group.records.flatMap((record) => keywordTokens(`${record.title} ${record.symptom} ${record.action}`)));
+      const matchedStandards = standards.filter((standard) => {
+        const sameSystem = normalizeSystemValue(standard.system || standard.form?.system) === group.system;
+        const standardText = `${standard.title} ${standard.equipment} ${standard.tag}`.toLowerCase();
+        const sameTarget = [group.equipment, group.tag].filter(Boolean).some((value) => standardText.includes(String(value).toLowerCase()));
+        const keywordHit = [...tokens].some((token) => standardText.includes(token.toLowerCase()));
+        return sameSystem && (sameTarget || keywordHit);
+      });
+      return {
+        ...group,
+        label,
+        tokens: [...tokens].slice(0, 8),
+        matchedStandards,
+        latestDate: group.records.map((record) => record.workDate).sort().at(-1) || "",
+        recommendation: group.records.length >= 3 ? "정식 SOP 후보" : group.records.length === 2 ? "묶음 검토" : "기록 누적 필요",
+      };
+    })
+    .sort((a, b) => b.records.length - a.records.length || String(b.latestDate).localeCompare(String(a.latestDate)));
+}
+
+function buildStandardFromWorkGroup(group) {
+  const records = group.records.map(normalizeWorkRecord);
+  const first = records[0] || makeBlankWorkRecord();
+  const risks = [...new Set(records.flatMap((record) => record.risks))];
+  const symptoms = uniqueTextRows(records.map((record) => record.symptom), 4);
+  const causes = uniqueTextRows(records.map((record) => record.cause), 4);
+  const actions = uniqueTextRows(records.flatMap((record) => String(record.action || "").split(/\n+/)), 7);
+  const results = uniqueTextRows(records.map((record) => record.result), 4);
+  const titleKeyword = group.keyword && group.keyword !== "작업" ? group.keyword : "반복작업";
+  const form = normalizeFormValues({
+    ...makeBlankForm(),
+    title: `${group.label} ${titleKeyword} 표준`,
+    workType: mostFrequent(records.map((record) => record.workType), "점검"),
+    equipment: mostFrequent(records.map((record) => record.equipment), first.equipment),
+    tag: mostFrequent(records.map((record) => record.tag), first.tag),
+    system: group.system || first.system,
+    team: mostFrequent(records.map((record) => record.team), "유틸리티P"),
+    author: mostFrequent(records.map((record) => record.author), ""),
+    shutdownMode: mostFrequent(records.map((record) => record.shutdownMode), "운전 중 가능"),
+    operationState: symptoms.join("\n"),
+    purpose: `${group.label} 관련 반복 작업을 동일한 판단 기준과 절차로 수행하기 위해 표준화한다.`,
+    risks,
+    notes: `작업기록 ${records.length}건 기반 SOP 후보입니다.\n주요 원인: ${causes.join(" / ") || "추가 확인 필요"}\n주요 결과: ${results.join(" / ") || "추가 확인 필요"}`,
+  });
+  const generated = normalizeDraft(generateDraft(form));
+
+  return {
+    form,
+    draft: {
+      ...generated,
+      preChecks: [
+        { id: makeId(), item: "최근 유사 작업 확인", criteria: `작업기록 ${records.length}건의 공통 증상과 조치 이력을 확인한다.` },
+        ...generated.preChecks,
+      ],
+      steps: actions.length
+        ? actions.map((action) => ({ id: makeId(), tag: "조작", action, note: "작업기록 기반 후보 절차" }))
+        : generated.steps,
+      abnormalActions: [
+        ...generated.abnormalActions,
+        ...causes.map((cause) => ({ id: makeId(), text: `유사 원인 재발 시 확인: ${cause}` })),
+      ],
+      resultRecords: [
+        ...generated.resultRecords,
+        { id: makeId(), field: "참조 작업기록", value: records.map((record) => `${record.workDate} ${record.title || record.equipment}`).join("\n") },
+      ],
+    },
+  };
+}
+
 function makeRevision(form, draft, savedAt, summary) {
   const normalizedForm = normalizeFormValues(form);
   return {
@@ -687,6 +845,7 @@ function makeEmptyRuntimeState() {
     draft: normalizeDraft(emptyDraft),
     docTab: "standard",
     standards: mergeExampleStandards([]),
+    workRecords: [],
     activeStandardId: null,
     examplesSeeded: true,
     systemOptions: DEFAULT_SYSTEMS,
@@ -705,6 +864,7 @@ function readLocalState() {
     return {
       ...fallback,
       standards: seeded ? parsedStandards : mergeExampleStandards(parsedStandards),
+      workRecords: (parsed.workRecords || []).map(normalizeWorkRecord),
       systemOptions: normalizeSystemOptions(parsed.systemOptions),
     };
   } catch {
@@ -721,6 +881,7 @@ function buildRemoteRuntimeState(remoteState, localState) {
   return {
     ...makeEmptyRuntimeState(),
     standards: mergeExampleStandards(sourceStandards),
+    workRecords: (remoteState.workRecords?.length ? remoteState.workRecords : localState.workRecords || []).map(normalizeWorkRecord),
     systemOptions: normalizeSystemOptions(remoteState.systemOptions || localState.systemOptions),
   };
 }
@@ -839,8 +1000,8 @@ function StorageStatus({ mode, message }) {
   );
 }
 
-function StepRail({ currentStep, setCurrentStep, isDraftReady, standardsCount, storageMode, storageMessage }) {
-  const steps = ["표준서 보관함", "기본 정보", "작업 조건", "초안 생성", "상세 편집", "오늘 작업 출력"];
+function StepRail({ currentStep, setCurrentStep, isDraftReady, standardsCount, workRecordsCount, storageMode, storageMessage }) {
+  const steps = ["오늘 업무 기록", "작업기록함", "유사작업 분석", "SOP 보관함", "기본 정보", "작업 조건", "초안 생성", "상세 편집", "출력"];
 
   return (
     <aside className="sidebar">
@@ -866,8 +1027,8 @@ function StepRail({ currentStep, setCurrentStep, isDraftReady, standardsCount, s
       <div className={`status-box ${isDraftReady ? "ready" : ""}`}>
         <Sparkles size={16} />
         <div>
-          <strong>{isDraftReady ? "표준서 편집 중" : `${standardsCount}건 보관됨`}</strong>
-          <p>{isDraftReady ? "저장 후 오늘 작업 문서를 바로 출력할 수 있습니다." : "보관된 표준서를 선택하거나 새로 작성하세요."}</p>
+          <strong>{isDraftReady ? "SOP 편집 중" : `${workRecordsCount}건 기록 · ${standardsCount}건 SOP`}</strong>
+          <p>{isDraftReady ? "저장 후 오늘 작업 문서를 바로 출력할 수 있습니다." : "기록을 쌓고 반복 업무를 SOP로 승격하세요."}</p>
         </div>
       </div>
 
@@ -888,6 +1049,165 @@ function Section({ title, icon: Icon, children, actions }) {
       </div>
       {children}
     </section>
+  );
+}
+
+function WorkRecordPanel({ record, systemOptions, message, onChange, onToggleRisk, onSave, onReset }) {
+  const visibleSystemOptions = record.system && !systemOptions.includes(record.system) ? [record.system, ...systemOptions] : systemOptions;
+
+  return (
+    <Section
+      title="오늘 업무 기록"
+      icon={CalendarCheck}
+      actions={
+        <button type="button" className="button primary" onClick={onSave}>
+          <Save size={16} />
+          기록 저장
+        </button>
+      }
+    >
+      {message && <div className="save-message">{message}</div>}
+      <div className="library-intro">
+        <div>
+          <h3>오늘 한 일을 가볍게 남기고, 나중에 SOP 재료로 씁니다.</h3>
+          <p>현상, 원인, 조치, 결과만 남겨도 주간/월간 분석에서 유사작업을 묶을 수 있습니다.</p>
+        </div>
+      </div>
+      <div className="form-grid">
+        <TextInput label="작업일" type="date" value={record.workDate} onChange={(value) => onChange("workDate", value)} />
+        <SelectField label="작업 유형" value={record.workType} onChange={(value) => onChange("workType", value)} options={WORK_TYPES} />
+        <TextInput label="작업명" value={record.title} onChange={(value) => onChange("title", value)} placeholder="예: 냉각수 펌프 이상소음 확인" span={2} />
+        <TextInput label="대상 설비" value={record.equipment} onChange={(value) => onChange("equipment", value)} placeholder="예: 냉각수 순환펌프" />
+        <TextInput label="설비 TAG" value={record.tag} onChange={(value) => onChange("tag", value)} placeholder="예: CTW-P-101A" />
+        <SelectField label="관련 계통" value={record.system} onChange={(value) => onChange("system", value)} options={visibleSystemOptions} />
+        <TextInput label="담당팀" value={record.team} onChange={(value) => onChange("team", value)} />
+        <TextInput label="작성자" value={record.author} onChange={(value) => onChange("author", value)} />
+        <SelectField label="정지/전환 조건" value={record.shutdownMode} onChange={(value) => onChange("shutdownMode", value)} options={SHUTDOWN_MODES} />
+        <TextArea label="현상/증상" value={record.symptom} onChange={(value) => onChange("symptom", value)} placeholder="작업 전 확인된 이상 현상, 요청 내용, 운전 상태" span={3} rows={3} />
+        <TextArea label="원인/추정" value={record.cause} onChange={(value) => onChange("cause", value)} placeholder="확인된 원인 또는 추정 원인" />
+        <TextArea label="조치내용" value={record.action} onChange={(value) => onChange("action", value)} placeholder="실제로 수행한 조치" />
+        <TextArea label="결과/후속조치" value={record.result} onChange={(value) => onChange("result", value)} placeholder="정상화 여부, 재점검 필요, 계획정비 반영 등" />
+        <TextArea label="메모" value={record.notes} onChange={(value) => onChange("notes", value)} span={3} rows={3} />
+      </div>
+
+      <div className="risk-block">
+        <div className="field-label">주요 위험요인</div>
+        <RiskSelector selected={record.risks} onToggle={onToggleRisk} />
+      </div>
+
+      <div className="panel-actions">
+        <button type="button" className="button ghost" onClick={onReset}>
+          새 기록
+        </button>
+        <button type="button" className="button primary" onClick={onSave}>
+          <Save size={16} />
+          기록 저장
+        </button>
+      </div>
+    </Section>
+  );
+}
+
+function WorkRecordLibrary({ records, onEdit, onDelete }) {
+  return (
+    <Section title="작업기록함" icon={ListChecks}>
+      <div className="library-intro">
+        <div>
+          <h3>하루하루의 작업을 표준서 후보 재료로 보관합니다.</h3>
+          <p>기록이 쌓이면 유사작업 분석에서 반복 패턴을 찾아 SOP 후보로 만들 수 있습니다.</p>
+        </div>
+      </div>
+      {records.length === 0 ? (
+        <div className="empty-card">
+          <CalendarCheck size={24} />
+          <p>아직 저장된 작업기록이 없습니다.</p>
+        </div>
+      ) : (
+        <div className="work-record-list">
+          {records.map((record) => (
+            <article className="work-record-card" key={record.id}>
+              <div>
+                <span>{record.workDate} · {record.workType} · {record.system}</span>
+                <h3>{record.title || record.symptom || "작업명 미입력"}</h3>
+                <p>{record.equipment || "설비 미입력"} {record.tag ? `· ${record.tag}` : ""}</p>
+              </div>
+              <div>
+                <strong>조치</strong>
+                <p>{record.action || "조치내용 미입력"}</p>
+              </div>
+              <div className="work-record-actions">
+                <button type="button" className="button ghost" onClick={() => onEdit(record)}>
+                  <Edit3 size={16} />
+                  수정
+                </button>
+                <button type="button" className="icon-button danger" onClick={() => onDelete(record.id)} aria-label="삭제" title="삭제">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function WorkAnalysisPanel({ groups, recordsCount, onPromote }) {
+  return (
+    <Section title="유사작업 분석" icon={Sparkles}>
+      <div className="analysis-summary">
+        <div>
+          <span>누적 작업기록</span>
+          <strong>{recordsCount}건</strong>
+        </div>
+        <div>
+          <span>분석 묶음</span>
+          <strong>{groups.length}개</strong>
+        </div>
+        <div>
+          <span>SOP 후보</span>
+          <strong>{groups.filter((group) => group.records.length >= 2).length}개</strong>
+        </div>
+      </div>
+
+      {groups.length === 0 ? (
+        <div className="empty-card">
+          <Sparkles size={24} />
+          <p>분석할 작업기록이 아직 없습니다.</p>
+        </div>
+      ) : (
+        <div className="analysis-list">
+          {groups.map((group) => (
+            <article className={`analysis-card ${group.records.length >= 2 ? "candidate" : ""}`} key={group.id}>
+              <div className="analysis-card-head">
+                <div>
+                  <span>{group.system} · {group.recommendation}</span>
+                  <h3>{group.label}</h3>
+                  <p>{group.records.length}건 · 최근 {group.latestDate || "-"} · 키워드 {group.tokens.join(", ") || "-"}</p>
+                </div>
+                <button type="button" className="button primary" onClick={() => onPromote(group)} disabled={group.records.length < 1}>
+                  SOP 후보 만들기
+                </button>
+              </div>
+              {group.matchedStandards.length > 0 && (
+                <div className="matched-standards">
+                  기존 SOP와 연결 가능: {group.matchedStandards.slice(0, 3).map((standard) => standard.title).join(" / ")}
+                </div>
+              )}
+              <div className="analysis-records">
+                {group.records.slice(0, 4).map((record) => (
+                  <div key={record.id}>
+                    <strong>{record.workDate}</strong>
+                    <span>{record.title || record.symptom || "작업명 미입력"}</span>
+                    <p>{record.action || record.result || "조치/결과 미입력"}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </Section>
   );
 }
 
@@ -1372,6 +1692,10 @@ export default function App() {
   const [draft, setDraft] = useState(normalizeDraft(emptyDraft));
   const [docTab, setDocTab] = useState("standard");
   const [standards, setStandards] = useState([]);
+  const [workRecords, setWorkRecords] = useState([]);
+  const [workRecordForm, setWorkRecordForm] = useState(makeBlankWorkRecord);
+  const [activeWorkRecordId, setActiveWorkRecordId] = useState(null);
+  const [workRecordMessage, setWorkRecordMessage] = useState("");
   const [activeStandardId, setActiveStandardId] = useState(null);
   const [saveMessage, setSaveMessage] = useState("");
   const [selectedRevisionRev, setSelectedRevisionRev] = useState(null);
@@ -1390,6 +1714,7 @@ export default function App() {
       setDraft(nextState.draft);
       setDocTab(nextState.docTab);
       setStandards(nextState.standards);
+      setWorkRecords(nextState.workRecords);
       setActiveStandardId(nextState.activeStandardId);
       setExamplesSeeded(nextState.examplesSeeded);
       setSystemOptions(nextState.systemOptions);
@@ -1430,15 +1755,15 @@ export default function App() {
 
   useEffect(() => {
     if (!loaded) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ form, draft, docTab, standards, activeStandardId, examplesSeeded, systemOptions }));
-  }, [form, draft, docTab, standards, activeStandardId, examplesSeeded, systemOptions, loaded]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ form, draft, docTab, standards, workRecords, activeStandardId, examplesSeeded, systemOptions }));
+  }, [form, draft, docTab, standards, workRecords, activeStandardId, examplesSeeded, systemOptions, loaded]);
 
   useEffect(() => {
     if (!loaded || storageMode !== "remote") return undefined;
 
     const timeoutId = window.setTimeout(async () => {
       try {
-        await Promise.all([saveStandardsToRemote(standards), saveSystemOptionsToRemote(systemOptions)]);
+        await Promise.all([saveStandardsToRemote(standards), saveWorkRecordsToRemote(workRecords), saveSystemOptionsToRemote(systemOptions)]);
         setStorageMessage(`Supabase 동기화 완료 · ${formatDateTime(new Date().toISOString())}`);
       } catch (error) {
         setStorageMode("local");
@@ -1447,12 +1772,13 @@ export default function App() {
     }, 700);
 
     return () => window.clearTimeout(timeoutId);
-  }, [standards, systemOptions, loaded, storageMode]);
+  }, [standards, workRecords, systemOptions, loaded, storageMode]);
 
   const isDraftReady = draft.steps.length > 0 || draft.preChecks.length > 0;
   const activeStandard = standards.find((standard) => standard.id === activeStandardId);
   const isViewingPastRevision = Boolean(selectedRevisionRev && activeStandard && selectedRevisionRev !== activeStandard.rev);
   const visibleSystemOptions = form.system && !systemOptions.includes(form.system) ? [form.system, ...systemOptions] : systemOptions;
+  const workGroups = useMemo(() => buildWorkRecordGroups(workRecords, standards), [workRecords, standards]);
 
   const updateForm = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -1470,7 +1796,7 @@ export default function App() {
   const createDraft = () => {
     setDraft(normalizeDraft(generateDraft(form)));
     setSaveMessage("");
-    setCurrentStep(4);
+    setCurrentStep(7);
   };
 
   const createNewStandard = () => {
@@ -1480,7 +1806,77 @@ export default function App() {
     setSelectedRevisionRev(null);
     setDocTab("standard");
     setSaveMessage("");
-    setCurrentStep(1);
+    setCurrentStep(4);
+  };
+
+  const updateWorkRecord = (key, value) => {
+    setWorkRecordForm((prev) => ({ ...prev, [key]: value }));
+    setWorkRecordMessage("");
+  };
+
+  const toggleWorkRecordRisk = (risk) => {
+    setWorkRecordForm((prev) => ({
+      ...prev,
+      risks: prev.risks.includes(risk) ? prev.risks.filter((item) => item !== risk) : [...prev.risks, risk],
+    }));
+    setWorkRecordMessage("");
+  };
+
+  const resetWorkRecord = () => {
+    setWorkRecordForm(makeBlankWorkRecord());
+    setActiveWorkRecordId(null);
+    setWorkRecordMessage("");
+    setCurrentStep(0);
+  };
+
+  const saveWorkRecord = () => {
+    if (!workRecordForm.title.trim() && !workRecordForm.symptom.trim() && !workRecordForm.action.trim()) {
+      setWorkRecordMessage("작업명, 현상, 조치내용 중 하나는 입력해야 저장할 수 있습니다.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const record = normalizeWorkRecord({
+      ...workRecordForm,
+      id: activeWorkRecordId || workRecordForm.id || makeUuid(),
+      savedAt: now,
+    });
+    setWorkRecords((prev) => {
+      const exists = prev.some((item) => item.id === record.id);
+      if (exists) return prev.map((item) => (item.id === record.id ? record : item));
+      return [record, ...prev];
+    });
+    setWorkRecordForm(makeBlankWorkRecord());
+    setActiveWorkRecordId(null);
+    setWorkRecordMessage("작업기록을 저장했습니다. 유사작업 분석에 바로 반영됩니다.");
+  };
+
+  const editWorkRecord = (record) => {
+    const normalized = normalizeWorkRecord(record);
+    setWorkRecordForm(normalized);
+    setActiveWorkRecordId(normalized.id);
+    setWorkRecordMessage("작업기록 수정 중입니다.");
+    setCurrentStep(0);
+  };
+
+  const deleteWorkRecord = (id) => {
+    setWorkRecords((prev) => prev.filter((record) => record.id !== id));
+    if (activeWorkRecordId === id) resetWorkRecord();
+    if (storageMode === "remote") {
+      deleteWorkRecordFromRemote(id)
+        .then(() => setStorageMessage("Supabase에서 작업기록을 삭제했습니다."))
+        .catch((error) => setStorageMessage(`Supabase 작업기록 삭제 실패: ${error.message}`));
+    }
+  };
+
+  const promoteWorkGroup = (group) => {
+    const candidate = buildStandardFromWorkGroup(group);
+    setForm(candidate.form);
+    setDraft(candidate.draft);
+    setActiveStandardId(null);
+    setSelectedRevisionRev(null);
+    setDocTab("standard");
+    setSaveMessage(`작업기록 ${group.records.length}건을 바탕으로 SOP 후보를 만들었습니다. 검토 후 저장하면 Rev.01로 등록됩니다.`);
+    setCurrentStep(7);
   };
 
   const loadStandard = (standard, mode) => {
@@ -1498,10 +1894,10 @@ export default function App() {
     setSaveMessage("");
     if (mode === "today" || mode === "view") {
       setDocTab("standard");
-      setCurrentStep(5);
+      setCurrentStep(8);
     } else {
       setDocTab("standard");
-      setCurrentStep(4);
+      setCurrentStep(7);
     }
   };
 
@@ -1514,7 +1910,7 @@ export default function App() {
     setDraft(normalizeDraft(revision.draft || emptyDraft));
     setSelectedRevisionRev(revision.rev);
     setDocTab("standard");
-    setCurrentStep(5);
+    setCurrentStep(8);
     setSaveMessage(`${revision.rev} 이력을 조회 중입니다. 과거 이력은 저장할 수 없고 최신 버전에서 편집해야 합니다.`);
   };
 
@@ -1624,6 +2020,7 @@ export default function App() {
         setCurrentStep={setCurrentStep}
         isDraftReady={isDraftReady}
         standardsCount={standards.length}
+        workRecordsCount={workRecords.length}
         storageMode={storageMode}
         storageMessage={storageMessage}
       />
@@ -1636,8 +2033,12 @@ export default function App() {
           </div>
           <div className="topbar-actions">
             <button type="button" className="button ghost" onClick={() => setCurrentStep(0)}>
+              <CalendarCheck size={16} />
+              업무기록
+            </button>
+            <button type="button" className="button ghost" onClick={() => setCurrentStep(3)}>
               <Library size={16} />
-              보관함
+              SOP 보관함
             </button>
             <button type="button" className="button ghost" onClick={saveStandard} disabled={!isDraftReady}>
               <Save size={16} />
@@ -1651,6 +2052,26 @@ export default function App() {
         </header>
 
         {currentStep === 0 && (
+          <WorkRecordPanel
+            record={workRecordForm}
+            systemOptions={systemOptions}
+            message={workRecordMessage}
+            onChange={updateWorkRecord}
+            onToggleRisk={toggleWorkRecordRisk}
+            onSave={saveWorkRecord}
+            onReset={resetWorkRecord}
+          />
+        )}
+
+        {currentStep === 1 && (
+          <WorkRecordLibrary records={workRecords} onEdit={editWorkRecord} onDelete={deleteWorkRecord} />
+        )}
+
+        {currentStep === 2 && (
+          <WorkAnalysisPanel groups={workGroups} recordsCount={workRecords.length} onPromote={promoteWorkGroup} />
+        )}
+
+        {currentStep === 3 && (
           <StandardLibrary
             standards={standards}
             onCreateNew={createNewStandard}
@@ -1661,7 +2082,7 @@ export default function App() {
           />
         )}
 
-        {currentStep === 1 && (
+        {currentStep === 4 && (
           <Section title="기본 정보" icon={FileText}>
             {activeStandard && (
               <div className="active-standard-note">
@@ -1692,17 +2113,17 @@ export default function App() {
               onDelete={deleteSystemOption}
             />
             <div className="panel-actions">
-              <button type="button" className="button ghost" onClick={() => setCurrentStep(0)}>
-                보관함
+              <button type="button" className="button ghost" onClick={() => setCurrentStep(3)}>
+                SOP 보관함
               </button>
-              <button type="button" className="button primary" onClick={() => setCurrentStep(2)}>
+              <button type="button" className="button primary" onClick={() => setCurrentStep(5)}>
                 다음
               </button>
             </div>
           </Section>
         )}
 
-        {currentStep === 2 && (
+        {currentStep === 5 && (
           <Section title="작업 조건 및 위험 판단" icon={AlertTriangle}>
             <div className="form-grid">
               <SelectField label="정지/전환 조건" value={form.shutdownMode} onChange={(value) => updateForm("shutdownMode", value)} options={SHUTDOWN_MODES} />
@@ -1721,17 +2142,17 @@ export default function App() {
             </div>
 
             <div className="panel-actions">
-              <button type="button" className="button ghost" onClick={() => setCurrentStep(1)}>
+              <button type="button" className="button ghost" onClick={() => setCurrentStep(4)}>
                 이전
               </button>
-              <button type="button" className="button primary" onClick={() => setCurrentStep(3)}>
+              <button type="button" className="button primary" onClick={() => setCurrentStep(6)}>
                 다음
               </button>
             </div>
           </Section>
         )}
 
-        {currentStep === 3 && (
+        {currentStep === 6 && (
           <Section title="초안 생성" icon={Sparkles}>
             <div className="draft-summary">
               <div>
@@ -1761,14 +2182,14 @@ export default function App() {
             </div>
 
             <div className="panel-actions">
-              <button type="button" className="button ghost" onClick={() => setCurrentStep(2)}>
+              <button type="button" className="button ghost" onClick={() => setCurrentStep(5)}>
                 이전
               </button>
             </div>
           </Section>
         )}
 
-        {currentStep === 4 && (
+        {currentStep === 7 && (
           <div className="edit-stack">
             {saveMessage && <div className="save-message">{saveMessage}</div>}
             <Section
@@ -1870,21 +2291,21 @@ export default function App() {
             </Section>
 
             <div className="panel-actions">
-              <button type="button" className="button ghost" onClick={() => setCurrentStep(3)}>
+              <button type="button" className="button ghost" onClick={() => setCurrentStep(6)}>
                 이전
               </button>
               <button type="button" className="button ghost" onClick={saveStandard} disabled={!isDraftReady}>
                 <Save size={16} />
                 표준서 저장
               </button>
-              <button type="button" className="button primary" onClick={() => setCurrentStep(5)}>
+              <button type="button" className="button primary" onClick={() => setCurrentStep(8)}>
                 오늘 작업 출력
               </button>
             </div>
           </div>
         )}
 
-        {currentStep === 5 && (
+        {currentStep === 8 && (
           <Section
             title={docTab === "standard" ? "표준서 출력" : "오늘 작업 출력"}
             icon={Printer}
@@ -1905,7 +2326,7 @@ export default function App() {
               <div className="empty-card">
                 <Sparkles size={24} />
                 <p>초안을 먼저 생성하세요.</p>
-                <button type="button" className="button primary" onClick={() => setCurrentStep(3)}>
+                <button type="button" className="button primary" onClick={() => setCurrentStep(6)}>
                   초안 생성으로 이동
                 </button>
               </div>

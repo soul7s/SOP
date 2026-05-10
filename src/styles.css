@@ -702,6 +702,139 @@ button {
   flex: 0 0 auto;
 }
 
+.work-record-list,
+.analysis-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.work-record-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.1fr) minmax(260px, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--white);
+}
+
+.work-record-card span,
+.analysis-card span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.6px;
+}
+
+.work-record-card h3,
+.analysis-card h3 {
+  margin: 0;
+  color: var(--navy);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.work-record-card p,
+.analysis-card p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.work-record-card strong {
+  display: block;
+  color: var(--navy);
+  font-size: 12px;
+}
+
+.work-record-actions {
+  display: flex;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.analysis-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.analysis-summary > div {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.analysis-summary span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.analysis-summary strong {
+  color: var(--navy);
+  font-size: 22px;
+}
+
+.analysis-card {
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--white);
+}
+
+.analysis-card.candidate {
+  border-color: #cfe4e1;
+  background: #fbfffe;
+}
+
+.analysis-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.matched-standards {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border-radius: 6px;
+  color: #265856;
+  background: #f3fbfa;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.analysis-records {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.analysis-records > div {
+  padding: 10px;
+  border: 1px solid #e8ebf0;
+  border-radius: 7px;
+  background: #fbfcfe;
+}
+
+.analysis-records strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--teal);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+}
+
 .active-standard-note,
 .today-note,
 .save-message {
@@ -1310,7 +1443,9 @@ button {
   .form-grid,
   .draft-summary,
   .two-column,
-  .doc-grid {
+  .doc-grid,
+  .analysis-summary,
+  .analysis-records {
     grid-template-columns: 1fr;
   }
 
@@ -1375,6 +1510,17 @@ button {
     min-width: 0;
     align-items: start;
     padding: 14px;
+  }
+
+  .work-record-card {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .work-record-actions,
+  .analysis-card-head {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .standard-system-cell {

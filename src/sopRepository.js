@@ -68,18 +68,44 @@ function fromStandardRow(row, revisions) {
   };
 }
 
+function toWorkRecordRow(record) {
+  return {
+    id: record.id,
+    standard_id: record.standardId || null,
+    standard_rev: record.standardRev || null,
+    work_date: record.workDate || new Date().toISOString().slice(0, 10),
+    status: record.status || "recorded",
+    result: record,
+  };
+}
+
+function fromWorkRecordRow(row) {
+  const result = row.result || {};
+  return {
+    ...result,
+    id: row.id,
+    standardId: row.standard_id || result.standardId || "",
+    standardRev: row.standard_rev || result.standardRev || "",
+    workDate: row.work_date || result.workDate || "",
+    status: row.status || result.status || "recorded",
+    savedAt: result.savedAt || row.updated_at || row.created_at || new Date().toISOString(),
+  };
+}
+
 export async function loadRemoteState() {
   ensureSupabase();
 
-  const [standardsResult, revisionsResult, settingsResult] = await Promise.all([
+  const [standardsResult, revisionsResult, settingsResult, workRunsResult] = await Promise.all([
     supabase.from("standards").select("id,title,work_type,equipment,tag,system,rev,saved_at,form,draft").order("saved_at", { ascending: false }),
     supabase.from("standard_revisions").select("id,standard_id,rev,saved_at,author,summary,form,draft").order("saved_at", { ascending: true }),
     supabase.from("app_settings").select("value").eq("key", SYSTEM_OPTIONS_KEY).maybeSingle(),
+    supabase.from("work_runs").select("id,standard_id,standard_rev,work_date,status,result,created_at,updated_at").order("work_date", { ascending: false }),
   ]);
 
   if (standardsResult.error) throw new Error(describeError(standardsResult.error));
   if (revisionsResult.error) throw new Error(describeError(revisionsResult.error));
   if (settingsResult.error) throw new Error(describeError(settingsResult.error));
+  if (workRunsResult.error && workRunsResult.error.code !== "PGRST205") throw new Error(describeError(workRunsResult.error));
 
   const revisionsByStandard = new Map();
   (revisionsResult.data || []).forEach((row) => {
@@ -91,6 +117,7 @@ export async function loadRemoteState() {
   return {
     standards: (standardsResult.data || []).map((row) => fromStandardRow(row, revisionsByStandard.get(row.id) || [])),
     systemOptions: settingsResult.data?.value || null,
+    workRecords: workRunsResult.error ? [] : (workRunsResult.data || []).map(fromWorkRecordRow),
   };
 }
 
@@ -123,8 +150,23 @@ export async function saveSystemOptionsToRemote(systemOptions) {
   if (error) throw new Error(describeError(error));
 }
 
+export async function saveWorkRecordsToRemote(workRecords) {
+  ensureSupabase();
+  const rows = workRecords.map(toWorkRecordRow);
+  if (!rows.length) return;
+
+  const { error } = await supabase.from("work_runs").upsert(rows, { onConflict: "id" });
+  if (error) throw new Error(describeError(error));
+}
+
 export async function deleteStandardFromRemote(id) {
   ensureSupabase();
   const { error } = await supabase.from("standards").delete().eq("id", id);
+  if (error) throw new Error(describeError(error));
+}
+
+export async function deleteWorkRecordFromRemote(id) {
+  ensureSupabase();
+  const { error } = await supabase.from("work_runs").delete().eq("id", id);
   if (error) throw new Error(describeError(error));
 }
