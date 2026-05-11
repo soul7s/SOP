@@ -64,6 +64,23 @@ button {
   background: var(--navy);
 }
 
+.sidebar-home {
+  display: block;
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sidebar-home:hover h1,
+.sidebar-home:focus-visible h1 {
+  color: var(--white);
+  text-decoration: underline;
+  text-underline-offset: 5px;
+}
+
 .sidebar-logo {
   margin-bottom: 7px;
   color: rgba(255, 255, 255, 0.4);

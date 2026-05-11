@@ -1396,10 +1396,10 @@ function StepRail({ currentStep, setCurrentStep, isDraftReady, standardsCount, w
 
   return (
     <aside className="sidebar">
-      <div>
+      <button className="sidebar-home" type="button" onClick={() => setCurrentStep(3)} aria-label="SOP 보관함으로 이동">
         <div className="sidebar-logo">Plant Utility</div>
         <h1>작업표준서 생성기</h1>
-      </div>
+      </button>
 
       <nav className="steps">
         {navGroups.map((group) => (
