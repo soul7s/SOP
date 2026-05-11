@@ -29,8 +29,8 @@ import {
   deleteStandardFromRemote,
   deleteWorkRecordFromRemote,
   loadRemoteState,
+  saveAppSettingsToRemote,
   saveStandardsToRemote,
-  saveSystemOptionsToRemote,
   saveWorkRecordsToRemote,
 } from "./sopRepository";
 
@@ -1032,12 +1032,18 @@ function readLocalState() {
 function buildRemoteRuntimeState(remoteState, localState) {
   const remoteStandards = syncExistingExampleStandards(remoteState.standards || []);
   const localStandards = syncExistingExampleStandards(localState.standards || []);
-  const sourceStandards = remoteStandards.length ? remoteStandards : localStandards;
+  const hasRemoteSeedFlag = typeof remoteState.examplesSeeded === "boolean";
+  const remoteHasUserData = remoteStandards.length > 0 || (remoteState.workRecords || []).length > 0;
+  const useRemoteAsSource = remoteState.examplesSeeded === true || remoteHasUserData;
+  const shouldSeedExamples = remoteState.examplesSeeded === false || (!hasRemoteSeedFlag && !remoteHasUserData);
+  const sourceStandards = useRemoteAsSource ? remoteStandards : localStandards;
+  const sourceWorkRecords = useRemoteAsSource ? remoteState.workRecords || [] : localState.workRecords || [];
 
   return {
     ...makeEmptyRuntimeState(),
-    standards: mergeExampleStandards(sourceStandards),
-    workRecords: (remoteState.workRecords?.length ? remoteState.workRecords : localState.workRecords || []).map(normalizeWorkRecord),
+    standards: shouldSeedExamples ? mergeExampleStandards(sourceStandards) : sourceStandards,
+    workRecords: sourceWorkRecords.map(normalizeWorkRecord),
+    examplesSeeded: true,
     systemOptions: normalizeSystemOptions(remoteState.systemOptions || localState.systemOptions),
   };
 }
@@ -2234,7 +2240,7 @@ export default function App() {
       const [standardsResult, workRecordsResult, settingsResult] = await Promise.allSettled([
         saveStandardsToRemote(standards, session.user.id),
         saveWorkRecordsToRemote(workRecords, session.user.id),
-        saveSystemOptionsToRemote(systemOptions, session.user.id),
+        saveAppSettingsToRemote({ systemOptions, examplesSeeded }, session.user.id),
       ]);
       const criticalFailure = [standardsResult, workRecordsResult].find((result) => result.status === "rejected");
       if (criticalFailure) {
@@ -2243,14 +2249,14 @@ export default function App() {
         return;
       }
       if (settingsResult.status === "rejected") {
-        setStorageMessage(`Supabase 저장 완료 · 관련계통 사용자 옵션은 브라우저에만 저장됩니다. (${settingsResult.reason?.message || "설정 저장 오류"})`);
+        setStorageMessage(`Supabase 저장 완료 · 사용자 설정과 샘플 생성 상태는 브라우저에만 저장됩니다. (${settingsResult.reason?.message || "설정 저장 오류"})`);
         return;
       }
       setStorageMessage(`Supabase 동기화 완료 · ${formatDateTime(new Date().toISOString())}`);
     }, 700);
 
     return () => window.clearTimeout(timeoutId);
-  }, [standards, workRecords, systemOptions, loaded, storageMode, session?.user?.id]);
+  }, [standards, workRecords, systemOptions, examplesSeeded, loaded, storageMode, session?.user?.id]);
 
   const isDraftReady = draft.steps.length > 0 || draft.preChecks.length > 0;
   const activeStandard = standards.find((standard) => standard.id === activeStandardId);

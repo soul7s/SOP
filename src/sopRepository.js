@@ -1,6 +1,7 @@
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
 const SYSTEM_OPTIONS_KEY = "system_options";
+const EXAMPLES_SEEDED_KEY = "examples_seeded";
 
 function ensureSupabase() {
   if (!isSupabaseConfigured || !supabase) {
@@ -102,13 +103,23 @@ function fromWorkRecordRow(row) {
   };
 }
 
+function getSettingValue(rows, key) {
+  return (rows || []).find((row) => row.key === key)?.value;
+}
+
+function parseExamplesSeeded(value) {
+  if (typeof value === "boolean") return value;
+  if (value && typeof value === "object" && "seeded" in value) return Boolean(value.seeded);
+  return null;
+}
+
 export async function loadRemoteState() {
   ensureSupabase();
 
   const [standardsResult, revisionsResult, settingsResult, workRunsResult] = await Promise.all([
     supabase.from("standards").select("id,title,work_type,equipment,tag,system,rev,saved_at,form,draft").order("saved_at", { ascending: false }),
     supabase.from("standard_revisions").select("id,standard_id,rev,saved_at,author,summary,form,draft").order("saved_at", { ascending: true }),
-    supabase.from("app_settings").select("value").eq("key", SYSTEM_OPTIONS_KEY).maybeSingle(),
+    supabase.from("app_settings").select("key,value").in("key", [SYSTEM_OPTIONS_KEY, EXAMPLES_SEEDED_KEY]),
     supabase.from("work_runs").select("id,standard_id,standard_rev,work_date,status,result,created_at,updated_at").order("work_date", { ascending: false }),
   ]);
 
@@ -124,9 +135,12 @@ export async function loadRemoteState() {
     revisionsByStandard.set(row.standard_id, next);
   });
 
+  const settingsRows = settingsResult.data || [];
+
   return {
     standards: (standardsResult.data || []).map((row) => fromStandardRow(row, revisionsByStandard.get(row.id) || [])),
-    systemOptions: settingsResult.data?.value || null,
+    systemOptions: getSettingValue(settingsRows, SYSTEM_OPTIONS_KEY) || null,
+    examplesSeeded: parseExamplesSeeded(getSettingValue(settingsRows, EXAMPLES_SEEDED_KEY)),
     workRecords: workRunsResult.error ? [] : (workRunsResult.data || []).map(fromWorkRecordRow),
   };
 }
@@ -146,6 +160,30 @@ export async function saveStandardsToRemote(standards, ownerId) {
     const { error } = await supabase.from("standard_revisions").upsert(revisionRows, { onConflict: "id" });
     if (error) throw new Error(describeError(error));
   }
+}
+
+export async function saveAppSettingsToRemote({ systemOptions, examplesSeeded }, ownerId) {
+  ensureSupabase();
+  ensureOwnerId(ownerId);
+  const updatedAt = new Date().toISOString();
+  const { error } = await supabase.from("app_settings").upsert(
+    [
+      {
+        key: SYSTEM_OPTIONS_KEY,
+        owner_id: ownerId,
+        value: systemOptions,
+        updated_at: updatedAt,
+      },
+      {
+        key: EXAMPLES_SEEDED_KEY,
+        owner_id: ownerId,
+        value: { seeded: Boolean(examplesSeeded) },
+        updated_at: updatedAt,
+      },
+    ],
+    { onConflict: "owner_id,key" },
+  );
+  if (error) throw new Error(describeError(error));
 }
 
 export async function saveSystemOptionsToRemote(systemOptions, ownerId) {
