@@ -2231,17 +2231,22 @@ export default function App() {
     if (!loaded || storageMode !== "remote" || !session?.user?.id) return undefined;
 
     const timeoutId = window.setTimeout(async () => {
-      try {
-        await Promise.all([
-          saveStandardsToRemote(standards, session.user.id),
-          saveWorkRecordsToRemote(workRecords, session.user.id),
-          saveSystemOptionsToRemote(systemOptions, session.user.id),
-        ]);
-        setStorageMessage(`Supabase 동기화 완료 · ${formatDateTime(new Date().toISOString())}`);
-      } catch (error) {
+      const [standardsResult, workRecordsResult, settingsResult] = await Promise.allSettled([
+        saveStandardsToRemote(standards, session.user.id),
+        saveWorkRecordsToRemote(workRecords, session.user.id),
+        saveSystemOptionsToRemote(systemOptions, session.user.id),
+      ]);
+      const criticalFailure = [standardsResult, workRecordsResult].find((result) => result.status === "rejected");
+      if (criticalFailure) {
         setStorageMode("local");
-        setStorageMessage(`공용 저장소 저장 실패로 브라우저 저장으로 전환했습니다. (${error.message})`);
+        setStorageMessage(`공용 저장소 저장 실패로 브라우저 저장으로 전환했습니다. (${criticalFailure.reason?.message || "알 수 없는 오류"})`);
+        return;
       }
+      if (settingsResult.status === "rejected") {
+        setStorageMessage(`Supabase 저장 완료 · 관련계통 사용자 옵션은 브라우저에만 저장됩니다. (${settingsResult.reason?.message || "설정 저장 오류"})`);
+        return;
+      }
+      setStorageMessage(`Supabase 동기화 완료 · ${formatDateTime(new Date().toISOString())}`);
     }, 700);
 
     return () => window.clearTimeout(timeoutId);
