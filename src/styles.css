@@ -588,6 +588,22 @@ button {
   filter: drop-shadow(0 13px 18px rgba(23, 35, 60, 0.13));
 }
 
+.ppe-character-stage.compact {
+  width: 118px;
+  height: 118px;
+  min-height: 0;
+  padding: 5px;
+  border-color: rgba(255, 255, 255, 0.32);
+  border-radius: 10px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
+}
+
+.ppe-character-stage.compact .ppe-character-svg {
+  width: 108px;
+  max-height: 108px;
+  filter: none;
+}
+
 .ppe-control {
   display: flex;
   flex-direction: column;
@@ -1349,6 +1365,33 @@ button {
   font-size: 12px;
 }
 
+.doc-header-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-header-aside {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 14px;
+}
+
+.doc-ppe-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.doc-ppe-preview > span {
+  color: rgba(255, 255, 255, 0.64);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+}
+
 .rev-badge {
   min-width: 78px;
   padding: 9px 12px;
@@ -1787,6 +1830,11 @@ button {
   .doc-header,
   .doc-footer {
     flex-direction: column;
+  }
+
+  .doc-header-aside {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .doc-meta {

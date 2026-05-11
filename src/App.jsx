@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -1096,8 +1096,12 @@ function RiskSelector({ selected, onToggle }) {
   );
 }
 
-function PpeCharacter({ selected }) {
-  const has = (item) => selected.includes(item);
+function PpeCharacter({ selected, compact = false }) {
+  const safeSelected = Array.isArray(selected) ? selected : [];
+  const gradientId = useId().replace(/:/g, "");
+  const skyId = `ppeSky-${gradientId}`;
+  const bodyId = `ppeBody-${gradientId}`;
+  const has = (item) => safeSelected.includes(item);
   const gloveType = ["내화학장갑", "절연장갑", "방열장갑", "보온장갑", "장갑"].find((item) => has(item));
   const gloveColor = {
     내화학장갑: "#2fb7a3",
@@ -1109,29 +1113,29 @@ function PpeCharacter({ selected }) {
   const showMask = has("방진마스크") || has("방독마스크");
 
   return (
-    <div className="ppe-character-stage" aria-hidden="true">
+    <div className={`ppe-character-stage ${compact ? "compact" : ""}`} aria-hidden="true">
       <svg className="ppe-character-svg" viewBox="0 0 260 260" role="img">
         <defs>
-          <linearGradient id="ppeSky" x1="0" x2="0" y1="0" y2="1">
+          <linearGradient id={skyId} x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="#c9f2f7" />
             <stop offset="55%" stopColor="#edfafa" />
             <stop offset="56%" stopColor="#f5e5aa" />
             <stop offset="100%" stopColor="#f7d881" />
           </linearGradient>
-          <linearGradient id="ppeBody" x1="0" x2="1" y1="0" y2="1">
+          <linearGradient id={bodyId} x1="0" x2="1" y1="0" y2="1">
             <stop offset="0%" stopColor="#b5e5f7" />
             <stop offset="100%" stopColor="#78c5e8" />
           </linearGradient>
         </defs>
 
-        <rect width="260" height="260" rx="18" fill="url(#ppeSky)" />
+        <rect width="260" height="260" rx="18" fill={`url(#${skyId})`} />
         <path d="M0 211c38-17 66-11 105-1 45 11 83 8 155-13v63H0Z" fill="#e8c776" opacity=".55" />
         <path d="M28 53c22-16 44-12 58 3 21-13 48-6 58 13 18-7 39-1 48 16" fill="none" stroke="#fff" strokeWidth="7" strokeLinecap="round" opacity=".75" />
 
         <g className="ppe-base">
-          <circle cx="84" cy="92" r="31" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" />
-          <circle cx="176" cy="92" r="31" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" />
-          <ellipse cx="130" cy="151" rx="76" ry="72" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="7" />
+          <circle cx="84" cy="92" r="31" fill={`url(#${bodyId})`} stroke="#315aa7" strokeWidth="6" />
+          <circle cx="176" cy="92" r="31" fill={`url(#${bodyId})`} stroke="#315aa7" strokeWidth="6" />
+          <ellipse cx="130" cy="151" rx="76" ry="72" fill={`url(#${bodyId})`} stroke="#315aa7" strokeWidth="7" />
           <path d="M78 122c-10 8-17 20-20 35" fill="none" stroke="#315aa7" strokeWidth="7" strokeLinecap="round" opacity=".85" />
           <path d="M182 122c10 8 17 20 20 35" fill="none" stroke="#315aa7" strokeWidth="7" strokeLinecap="round" opacity=".85" />
           <circle cx="130" cy="139" r="54" fill="#fff" stroke="#315aa7" strokeWidth="6" />
@@ -1141,8 +1145,8 @@ function PpeCharacter({ selected }) {
           <ellipse cx="149" cy="134" rx="7" ry="12" fill="#315aa7" />
           <path d="M122 154c5 7 11 7 16 0" fill="none" stroke="#315aa7" strokeWidth="5" strokeLinecap="round" />
           <path d="M117 101h26M107 89l14 8M153 89l-14 8" stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
-          <path d="M73 163c-24 8-32 26-21 38 10 12 30 4 36-18" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
-          <path d="M187 163c24 8 32 26 21 38-10 12-30 4-36-18" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
+          <path d="M73 163c-24 8-32 26-21 38 10 12 30 4 36-18" fill={`url(#${bodyId})`} stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
+          <path d="M187 163c24 8 32 26 21 38-10 12-30 4-36-18" fill={`url(#${bodyId})`} stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
           <ellipse cx="103" cy="218" rx="25" ry="13" fill="#6fceea" stroke="#315aa7" strokeWidth="6" />
           <ellipse cx="157" cy="218" rx="25" ry="13" fill="#6fceea" stroke="#315aa7" strokeWidth="6" />
         </g>
@@ -1767,20 +1771,29 @@ function EditableList({ rows, onChange, onAdd, onRemove, onMove }) {
   );
 }
 
-function DocHeader({ form, docType = "비정형 작업 표준서" }) {
+function DocHeader({ form, docType = "비정형 작업 표준서", showPpePreview = false }) {
+  const headerPpe = normalizePpeSelection(form.ppe);
   return (
     <>
       <div className="doc-header">
-        <div>
+        <div className="doc-header-title">
           <div className="doc-kicker">Work Standard · {docType}</div>
           <h2>{form.title || "작업명 미입력"}</h2>
           <p>
             {form.equipment || "대상 설비"} · {form.tag || "TAG 미입력"}
           </p>
         </div>
-        <div className="rev-badge">
-          <span>REV</span>
-          <strong>{form.rev}</strong>
+        <div className="doc-header-aside">
+          {showPpePreview && (
+            <div className="doc-ppe-preview" aria-label="필수 보호구 착용 예시">
+              <span>필수 보호구</span>
+              <PpeCharacter selected={headerPpe} compact />
+            </div>
+          )}
+          <div className="rev-badge">
+            <span>REV</span>
+            <strong>{form.rev}</strong>
+          </div>
         </div>
       </div>
       <div className="doc-meta">
@@ -1807,7 +1820,7 @@ function DocHeader({ form, docType = "비정형 작업 표준서" }) {
 function StandardDoc({ form, draft }) {
   return (
     <article className="document">
-      <DocHeader form={form} docType="비정형 작업 표준서" />
+      <DocHeader form={form} docType="비정형 작업 표준서" showPpePreview />
 
       <div className="doc-body">
         <DocSection title="작업 목적">
