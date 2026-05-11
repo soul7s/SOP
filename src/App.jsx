@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   CalendarCheck,
+  Chrome,
   CloudOff,
   ClipboardCheck,
   Database,
@@ -23,7 +24,7 @@ import {
   Trash2,
   UserRound,
 } from "lucide-react";
-import { getAuthSession, isSupabaseConfigured, onAuthSessionChange, sendLoginLink, signOut } from "./supabaseClient";
+import { getAuthSession, isSupabaseConfigured, onAuthSessionChange, sendLoginLink, signInWithGoogle, signOut } from "./supabaseClient";
 import {
   deleteStandardFromRemote,
   deleteWorkRecordFromRemote,
@@ -1323,7 +1324,8 @@ function StorageStatus({ mode, message }) {
   );
 }
 
-function AuthPanel({ email, message, loading, onEmailChange, onSendLink }) {
+function AuthPanel({ email, message, loading, onEmailChange, onGoogleLogin, onSendLink }) {
+  const isLoading = Boolean(loading);
   return (
     <section className="auth-panel">
       <div className="auth-card">
@@ -1333,7 +1335,17 @@ function AuthPanel({ email, message, loading, onEmailChange, onSendLink }) {
         <div>
           <span className="eyebrow">Supabase Auth</span>
           <h3>로그인 후 SOP 저장소를 사용합니다.</h3>
-          <p>이메일 인증 링크로 로그인하면 표준서, 이력, 작업기록이 해당 사용자 데이터로만 저장됩니다.</p>
+          <p>Google 로그인을 기본으로 사용하고, 필요할 때 이메일 인증 링크를 보조로 사용할 수 있습니다.</p>
+        </div>
+        <div className="auth-primary-login">
+          <button type="button" className="button primary google-login-button" onClick={onGoogleLogin} disabled={isLoading}>
+            <Chrome size={18} />
+            {loading === "google" ? "Google로 이동 중" : "Google로 로그인"}
+          </button>
+          <p>같은 Google 계정으로 로그인하면 다른 기기에서도 같은 SOP 저장소를 사용할 수 있습니다.</p>
+        </div>
+        <div className="auth-divider">
+          <span>또는 이메일 링크로 로그인</span>
         </div>
         <div className="auth-form">
           <label className="field">
@@ -1348,9 +1360,9 @@ function AuthPanel({ email, message, loading, onEmailChange, onSendLink }) {
               onKeyDown={(event) => event.key === "Enter" && onSendLink()}
             />
           </label>
-          <button type="button" className="button primary" onClick={onSendLink} disabled={loading}>
+          <button type="button" className="button ghost" onClick={onSendLink} disabled={isLoading}>
             <Mail size={16} />
-            {loading ? "전송 중" : "로그인 링크 받기"}
+            {loading === "email" ? "전송 중" : "로그인 링크 받기"}
           </button>
         </div>
         {message && <div className="auth-message">{message}</div>}
@@ -2108,7 +2120,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
   const [authEmail, setAuthEmail] = useState("");
   const [authMessage, setAuthMessage] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState("");
   const [authBypass, setAuthBypass] = useState(() => authBypassEmail(localStorage.getItem(AUTH_BYPASS_STORAGE_KEY)));
   const [loaded, setLoaded] = useState(false);
   const [storageMode, setStorageMode] = useState(isSupabaseConfigured ? "loading" : "local");
@@ -2244,6 +2256,17 @@ export default function App() {
   const bypassLabel = authBypass && !session?.user?.id ? `${authBypass} · 임시` : "";
   const needsLogin = isSupabaseConfigured && authReady && !session?.user?.id && !authBypass;
 
+  const handleGoogleLogin = async () => {
+    setAuthLoading("google");
+    setAuthMessage("");
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      setAuthMessage(`Google 로그인 시작 실패: ${error.message}`);
+      setAuthLoading("");
+    }
+  };
+
   const sendAuthLink = async () => {
     const email = authEmail.trim();
     if (!email) {
@@ -2261,7 +2284,7 @@ export default function App() {
       return;
     }
 
-    setAuthLoading(true);
+    setAuthLoading("email");
     setAuthMessage("");
     try {
       await sendLoginLink(email);
@@ -2269,7 +2292,7 @@ export default function App() {
     } catch (error) {
       setAuthMessage(authFailureMessage(error));
     } finally {
-      setAuthLoading(false);
+      setAuthLoading("");
     }
   };
 
@@ -2597,6 +2620,7 @@ export default function App() {
               setAuthEmail(value);
               setAuthMessage("");
             }}
+            onGoogleLogin={handleGoogleLogin}
             onSendLink={sendAuthLink}
           />
         )}

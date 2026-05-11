@@ -351,6 +351,46 @@ button {
   line-height: 1.7;
 }
 
+.auth-primary-login {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 8px;
+}
+
+.auth-primary-login .button {
+  width: 100%;
+  min-height: 46px;
+  font-size: 14px;
+}
+
+.auth-primary-login p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.google-login-button {
+  border: 1px solid rgba(23, 35, 60, 0.12);
+}
+
+.auth-divider {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+  content: "";
+}
+
 .auth-form {
   display: grid;
   grid-column: 1 / -1;
