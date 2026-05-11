@@ -1143,8 +1143,6 @@ function PpeCharacter({ selected }) {
           <path d="M117 101h26M107 89l14 8M153 89l-14 8" stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
           <path d="M73 163c-24 8-32 26-21 38 10 12 30 4 36-18" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
           <path d="M187 163c24 8 32 26 21 38-10 12-30 4-36-18" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
-          <path d="M180 157c34 3 50 18 43 36" fill="none" stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
-          <circle cx="223" cy="191" r="14" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" />
           <ellipse cx="103" cy="218" rx="25" ry="13" fill="#6fceea" stroke="#315aa7" strokeWidth="6" />
           <ellipse cx="157" cy="218" rx="25" ry="13" fill="#6fceea" stroke="#315aa7" strokeWidth="6" />
         </g>
