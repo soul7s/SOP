@@ -1663,11 +1663,11 @@ function StandardLibrary({ standards, onCreateNew, onView, onLoadToday, onEdit, 
               <div className="standard-list-actions">
                 <button type="button" className="button ghost" onClick={() => onView(standard)}>
                   <FileText size={16} />
-                  보기
+                  표준서 보기
                 </button>
                 <button type="button" className="button primary" onClick={() => onLoadToday(standard)}>
                   <CalendarCheck size={16} />
-                  오늘 작업
+                  오늘 작업 시작
                 </button>
                 <button type="button" className="icon-button" onClick={() => onEdit(standard)} aria-label="편집" title="편집">
                   <Edit3 size={16} />
