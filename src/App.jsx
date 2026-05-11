@@ -48,18 +48,18 @@ const PERMIT_OPTIONS = ["불필요", "일반작업허가", "화기작업허가",
 const LOTO_OPTIONS = ["불필요", "필요", "조건부 필요"];
 const JUDGEMENT_OPTIONS = ["즉시조치", "계획정비 반영", "모니터링 유지", "외부전문가 확인"];
 const RISK_OPTIONS = ["전기", "압력", "고온", "저온", "회전체", "화학물질", "고소", "중량물", "누출", "소음", "협착"];
-const PPE_OPTIONS = ["안전모", "안전화", "방진마스크", "보안경", "장갑"];
+const PPE_OPTIONS = ["안전모", "안전화", "보안경", "보안면", "방진마스크", "방독마스크", "귀마개", "안전조끼", "안전벨트", "장갑", "내화학장갑", "절연장갑", "방열장갑", "보온장갑"];
 const PPE_BY_RISK = {
-  전기: ["안전모", "안전화", "보안경", "장갑"],
-  압력: ["안전모", "안전화", "보안경", "장갑"],
-  고온: ["안전모", "안전화", "보안경", "장갑"],
-  저온: ["안전모", "안전화", "보안경", "장갑"],
+  전기: ["안전모", "안전화", "보안경", "절연장갑", "안전조끼"],
+  압력: ["안전모", "안전화", "보안경", "보안면", "장갑"],
+  고온: ["안전모", "안전화", "보안면", "방열장갑"],
+  저온: ["안전모", "안전화", "보안경", "보온장갑"],
   회전체: ["안전모", "안전화", "보안경", "장갑"],
-  화학물질: ["안전모", "안전화", "방진마스크", "보안경", "장갑"],
-  고소: ["안전모", "안전화", "장갑"],
-  중량물: ["안전모", "안전화", "장갑"],
-  누출: ["안전모", "안전화", "보안경", "장갑"],
-  소음: ["안전모", "안전화"],
+  화학물질: ["안전모", "안전화", "보안경", "보안면", "방독마스크", "내화학장갑"],
+  고소: ["안전모", "안전화", "안전벨트", "안전조끼", "장갑"],
+  중량물: ["안전모", "안전화", "안전조끼", "장갑"],
+  누출: ["안전모", "안전화", "보안경", "보안면", "장갑"],
+  소음: ["안전모", "안전화", "귀마개"],
   협착: ["안전모", "안전화", "장갑"],
 };
 const PROC_TAGS = ["확인", "측정", "안전주의", "조작"];
@@ -578,7 +578,7 @@ function makeDetailedProcedureSteps(form, spares, selectedPpe) {
 
 function generateDraft(form) {
   const risks = Array.isArray(form.risks) ? form.risks : [];
-  const selectedPpe = normalizePpeSelection(form.ppe).length ? normalizePpeSelection(form.ppe) : getRecommendedPpeForRisks(risks);
+  const selectedPpe = normalizePpeSelection(form.ppe).length ? normalizePpeSelection(form.ppe) : getRecommendedPpeForRisks(risks, form.permit);
   const riskItems = risks.map((risk) => ({
     risk,
     check: riskLibrary[risk]?.check || `${risk} 관련 위험요인을 확인한다.`,
@@ -686,11 +686,14 @@ function normalizePpeSelection(value) {
   return [...new Set((Array.isArray(value) ? value : []).filter((item) => PPE_OPTIONS.includes(item)))];
 }
 
-function getRecommendedPpeForRisks(risks = []) {
+function getRecommendedPpeForRisks(risks = [], permit = "") {
   const selected = new Set(["안전모", "안전화"]);
   risks.forEach((risk) => {
     (PPE_BY_RISK[risk] || []).forEach((item) => selected.add(item));
   });
+  if (permit === "고소작업허가") {
+    ["안전벨트", "안전조끼", "장갑"].forEach((item) => selected.add(item));
+  }
   return PPE_OPTIONS.filter((item) => selected.has(item));
 }
 
@@ -699,7 +702,7 @@ function normalizeFormValues(form) {
   next.workType = normalizeWorkType(next.workType, next.title);
   next.system = normalizeSystemValue(next.system);
   next.risks = Array.isArray(next.risks) ? next.risks.filter((risk) => RISK_OPTIONS.includes(risk)) : [];
-  next.ppe = Array.isArray(next.ppe) ? normalizePpeSelection(next.ppe) : getRecommendedPpeForRisks(next.risks);
+  next.ppe = Array.isArray(next.ppe) ? normalizePpeSelection(next.ppe) : getRecommendedPpeForRisks(next.risks, next.permit);
   return next;
 }
 
@@ -798,7 +801,7 @@ function buildStandardFromWorkGroup(group) {
     operationState: symptoms.join("\n"),
     purpose: `${group.label} 관련 반복 작업을 동일한 판단 기준과 절차로 수행하기 위해 표준화한다.`,
     risks,
-    ppe: getRecommendedPpeForRisks(risks),
+    ppe: getRecommendedPpeForRisks(risks, first.permit),
     notes: `작업기록 ${records.length}건 기반 SOP 후보입니다.\n주요 원인: ${causes.join(" / ") || "추가 확인 필요"}\n주요 결과: ${results.join(" / ") || "추가 확인 필요"}`,
   });
   const generated = normalizeDraft(generateDraft(form));
@@ -919,7 +922,7 @@ function buildExampleStandards() {
       date: "2026-05-10",
       rev: override.rev || "Rev.01",
     };
-    form.ppe = Array.isArray(override.ppe) ? override.ppe : getRecommendedPpeForRisks(form.risks);
+    form.ppe = Array.isArray(override.ppe) ? override.ppe : getRecommendedPpeForRisks(form.risks, form.permit);
     return makeStandardRecord(form, normalizeDraft(generateDraft(form)), `example-${String(index + 1).padStart(2, "0")}`, {
       savedAt,
       summary: "예시 표준서 최초 등록",
@@ -936,7 +939,7 @@ function mergeExampleStandards(savedStandards) {
 function syncExistingExampleStandards(savedStandards) {
   return savedStandards.map((standard) => {
     const form = normalizeFormValues({ ...defaultForm, ...standard.form, rev: standard.rev || standard.form?.rev || "Rev.01" });
-    if (!Array.isArray(standard.form?.ppe)) form.ppe = getRecommendedPpeForRisks(form.risks);
+    if (!Array.isArray(standard.form?.ppe)) form.ppe = getRecommendedPpeForRisks(form.risks, form.permit);
     const draft = normalizeDraft(standard.draft || emptyDraft);
     return {
       ...standard,
@@ -1095,41 +1098,130 @@ function RiskSelector({ selected, onToggle }) {
 
 function PpeCharacter({ selected }) {
   const has = (item) => selected.includes(item);
+  const gloveType = ["내화학장갑", "절연장갑", "방열장갑", "보온장갑", "장갑"].find((item) => has(item));
+  const gloveColor = {
+    내화학장갑: "#2fb7a3",
+    절연장갑: "#f5cf42",
+    방열장갑: "#e85c43",
+    보온장갑: "#8f80d8",
+    장갑: "#486fd8",
+  }[gloveType];
+  const showMask = has("방진마스크") || has("방독마스크");
+
   return (
     <div className="ppe-character-stage" aria-hidden="true">
-      <div className="ppe-character">
-        <div className="mascot-ear left" />
-        <div className="mascot-ear right" />
-        <div className="mascot-body" />
-        <div className="mascot-face">
-          <span className="mascot-eye left" />
-          <span className="mascot-eye right" />
-          <span className="mascot-mouth" />
-        </div>
-        <div className="mascot-arm left" />
-        <div className="mascot-arm right" />
-        <div className="mascot-tail" />
-        {has("안전모") && <div className="ppe-helmet" />}
-        {has("보안경") && (
-          <div className="ppe-goggles">
-            <span />
-            <span />
-          </div>
+      <svg className="ppe-character-svg" viewBox="0 0 260 260" role="img">
+        <defs>
+          <linearGradient id="ppeSky" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#c9f2f7" />
+            <stop offset="55%" stopColor="#edfafa" />
+            <stop offset="56%" stopColor="#f5e5aa" />
+            <stop offset="100%" stopColor="#f7d881" />
+          </linearGradient>
+          <linearGradient id="ppeBody" x1="0" x2="1" y1="0" y2="1">
+            <stop offset="0%" stopColor="#b5e5f7" />
+            <stop offset="100%" stopColor="#78c5e8" />
+          </linearGradient>
+        </defs>
+
+        <rect width="260" height="260" rx="18" fill="url(#ppeSky)" />
+        <path d="M0 211c38-17 66-11 105-1 45 11 83 8 155-13v63H0Z" fill="#e8c776" opacity=".55" />
+        <path d="M28 53c22-16 44-12 58 3 21-13 48-6 58 13 18-7 39-1 48 16" fill="none" stroke="#fff" strokeWidth="7" strokeLinecap="round" opacity=".75" />
+
+        <g className="ppe-base">
+          <circle cx="84" cy="92" r="31" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" />
+          <circle cx="176" cy="92" r="31" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" />
+          <ellipse cx="130" cy="151" rx="76" ry="72" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="7" />
+          <path d="M78 122c-10 8-17 20-20 35" fill="none" stroke="#315aa7" strokeWidth="7" strokeLinecap="round" opacity=".85" />
+          <path d="M182 122c10 8 17 20 20 35" fill="none" stroke="#315aa7" strokeWidth="7" strokeLinecap="round" opacity=".85" />
+          <circle cx="130" cy="139" r="54" fill="#fff" stroke="#315aa7" strokeWidth="6" />
+          <circle cx="88" cy="151" r="14" fill="#f6c7c9" opacity=".75" />
+          <circle cx="172" cy="151" r="14" fill="#f6c7c9" opacity=".75" />
+          <ellipse cx="111" cy="134" rx="7" ry="12" fill="#315aa7" />
+          <ellipse cx="149" cy="134" rx="7" ry="12" fill="#315aa7" />
+          <path d="M122 154c5 7 11 7 16 0" fill="none" stroke="#315aa7" strokeWidth="5" strokeLinecap="round" />
+          <path d="M117 101h26M107 89l14 8M153 89l-14 8" stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
+          <path d="M73 163c-24 8-32 26-21 38 10 12 30 4 36-18" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
+          <path d="M187 163c24 8 32 26 21 38-10 12-30 4-36-18" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
+          <path d="M180 157c34 3 50 18 43 36" fill="none" stroke="#315aa7" strokeWidth="6" strokeLinecap="round" />
+          <circle cx="223" cy="191" r="14" fill="url(#ppeBody)" stroke="#315aa7" strokeWidth="6" />
+          <ellipse cx="103" cy="218" rx="25" ry="13" fill="#6fceea" stroke="#315aa7" strokeWidth="6" />
+          <ellipse cx="157" cy="218" rx="25" ry="13" fill="#6fceea" stroke="#315aa7" strokeWidth="6" />
+        </g>
+
+        {has("안전조끼") && (
+          <g>
+            <path d="M84 158c15 12 77 12 92 0l-8 54H92Z" fill="#ff9d2d" stroke="#315aa7" strokeWidth="5" />
+            <path d="M111 162v47M149 162v47M92 186h76" stroke="#fff6a8" strokeWidth="5" strokeLinecap="round" />
+          </g>
         )}
-        {has("방진마스크") && <div className="ppe-mask" />}
-        {has("장갑") && (
-          <>
-            <div className="ppe-glove left" />
-            <div className="ppe-glove right" />
-          </>
+
+        {has("안전벨트") && (
+          <g>
+            <path d="M87 159l82 54M173 159l-82 54" stroke="#24415d" strokeWidth="8" strokeLinecap="round" />
+            <path d="M96 208h68" stroke="#24415d" strokeWidth="9" strokeLinecap="round" />
+            <rect x="118" y="194" width="24" height="18" rx="5" fill="#ffd44f" stroke="#24415d" strokeWidth="5" />
+          </g>
         )}
+
         {has("안전화") && (
-          <>
-            <div className="ppe-boot left" />
-            <div className="ppe-boot right" />
-          </>
+          <g>
+            <path d="M78 216h43c5 0 9 4 9 9v4H79c-8 0-12-4-12-9 0-3 4-4 11-4Z" fill="#2f3440" stroke="#315aa7" strokeWidth="5" />
+            <path d="M139 216h43c7 0 11 1 11 4 0 5-4 9-12 9h-51v-4c0-5 4-9 9-9Z" fill="#2f3440" stroke="#315aa7" strokeWidth="5" />
+            <path d="M84 222h34M142 222h34" stroke="#8fa2b3" strokeWidth="3" strokeLinecap="round" />
+          </g>
         )}
-      </div>
+
+        {gloveType && (
+          <g>
+            <path d="M54 178c11-8 28 0 27 15-1 14-18 22-31 14-11-7-7-21 4-29Z" fill={gloveColor} stroke="#315aa7" strokeWidth="5" />
+            <path d="M206 178c-11-8-28 0-27 15 1 14 18 22 31 14 11-7 7-21-4-29Z" fill={gloveColor} stroke="#315aa7" strokeWidth="5" />
+            <path d="M61 185l15 8M199 185l-15 8" stroke="#fff" strokeWidth="3" strokeLinecap="round" opacity=".65" />
+          </g>
+        )}
+
+        {has("귀마개") && (
+          <g>
+            <path d="M67 98c-11 6-17 18-16 32M193 98c11 6 17 18 16 32" fill="none" stroke="#293a55" strokeWidth="6" strokeLinecap="round" />
+            <circle cx="70" cy="117" r="12" fill="#ff8a3d" stroke="#293a55" strokeWidth="5" />
+            <circle cx="190" cy="117" r="12" fill="#ff8a3d" stroke="#293a55" strokeWidth="5" />
+          </g>
+        )}
+
+        {has("안전모") && (
+          <g>
+            <path d="M75 91c4-33 28-53 55-53s51 20 55 53Z" fill="#ffd44f" stroke="#315aa7" strokeWidth="6" strokeLinejoin="round" />
+            <path d="M63 91h134" stroke="#315aa7" strokeWidth="10" strokeLinecap="round" />
+            <path d="M130 41v44M102 52c9 8 12 20 12 34M158 52c-9 8-12 20-12 34" stroke="#fff6a8" strokeWidth="5" strokeLinecap="round" opacity=".9" />
+          </g>
+        )}
+
+        {has("보안경") && (
+          <g>
+            <rect x="95" y="122" width="31" height="22" rx="9" fill="#bfe7f5" stroke="#263140" strokeWidth="5" />
+            <rect x="134" y="122" width="31" height="22" rx="9" fill="#bfe7f5" stroke="#263140" strokeWidth="5" />
+            <path d="M126 133h8" stroke="#263140" strokeWidth="5" strokeLinecap="round" />
+          </g>
+        )}
+
+        {has("보안면") && (
+          <path d="M82 104c9-13 27-20 48-20s39 7 48 20v55c-9 22-25 33-48 33s-39-11-48-33Z" fill="#d9f4ff" stroke="#315aa7" strokeWidth="5" opacity=".58" />
+        )}
+
+        {showMask && (
+          <g>
+            <path d="M101 153c13 13 45 13 58 0v23c-13 13-45 13-58 0Z" fill={has("방독마스크") ? "#50606b" : "#eef4f7"} stroke="#315aa7" strokeWidth="5" strokeLinejoin="round" />
+            <path d="M111 163h38" stroke={has("방독마스크") ? "#93a4af" : "#b9cbd4"} strokeWidth="4" strokeLinecap="round" />
+            {has("방독마스크") && (
+              <>
+                <circle cx="97" cy="174" r="12" fill="#6d7a83" stroke="#315aa7" strokeWidth="4" />
+                <circle cx="163" cy="174" r="12" fill="#6d7a83" stroke="#315aa7" strokeWidth="4" />
+                <path d="M92 174h10M158 174h10" stroke="#c7d3da" strokeWidth="3" strokeLinecap="round" />
+              </>
+            )}
+          </g>
+        )}
+      </svg>
     </div>
   );
 }
@@ -2124,7 +2216,7 @@ export default function App() {
   const isViewingPastRevision = Boolean(selectedRevisionRev && activeStandard && selectedRevisionRev !== activeStandard.rev);
   const visibleSystemOptions = form.system && !systemOptions.includes(form.system) ? [form.system, ...systemOptions] : systemOptions;
   const workGroups = useMemo(() => buildWorkRecordGroups(workRecords, standards), [workRecords, standards]);
-  const recommendedPpe = useMemo(() => getRecommendedPpeForRisks(form.risks), [form.risks]);
+  const recommendedPpe = useMemo(() => getRecommendedPpeForRisks(form.risks, form.permit), [form.risks, form.permit]);
   const bypassLabel = authBypass && !session?.user?.id ? `${AUTH_BYPASS_EMAIL} · 임시` : "";
   const needsLogin = isSupabaseConfigured && authReady && !session?.user?.id && !authBypass;
 
@@ -2170,7 +2262,13 @@ export default function App() {
   };
 
   const updateForm = (key, value) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === "permit" && value === "고소작업허가") {
+        next.ppe = normalizePpeSelection([...normalizePpeSelection(prev.ppe), "안전모", "안전화", "안전벨트", "안전조끼", "장갑"]);
+      }
+      return next;
+    });
     setSaveMessage("");
   };
 
@@ -2284,7 +2382,7 @@ export default function App() {
 
   const loadStandard = (standard, mode) => {
     const loadedForm = normalizeFormValues({ ...defaultForm, ...standard.form });
-    if (!Array.isArray(standard.form?.ppe)) loadedForm.ppe = getRecommendedPpeForRisks(loadedForm.risks);
+    if (!Array.isArray(standard.form?.ppe)) loadedForm.ppe = getRecommendedPpeForRisks(loadedForm.risks, loadedForm.permit);
     if (mode === "today") {
       loadedForm.date = new Date().toISOString().slice(0, 10);
     }
@@ -2307,7 +2405,7 @@ export default function App() {
 
   const loadRevision = (revision) => {
     const revisionForm = normalizeFormValues({ ...defaultForm, ...revision.form });
-    if (!Array.isArray(revision.form?.ppe)) revisionForm.ppe = getRecommendedPpeForRisks(revisionForm.risks);
+    if (!Array.isArray(revision.form?.ppe)) revisionForm.ppe = getRecommendedPpeForRisks(revisionForm.risks, revisionForm.permit);
     setForm(revisionForm);
     if (revisionForm.system && !systemOptions.includes(revisionForm.system)) {
       setSystemOptions((prev) => normalizeSystemOptions([revisionForm.system, ...prev]));
