@@ -77,11 +77,24 @@ const DOC_TABS = [
 ];
 
 const STORAGE_KEY = "plant-work-standard-builder:v1";
-const AUTH_BYPASS_EMAIL = "jisun_1@naver.com";
+const AUTH_BYPASS_EMAILS = ["jisun_1@naver.com"];
 const AUTH_BYPASS_STORAGE_KEY = `${STORAGE_KEY}:auth-bypass`;
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function authBypassEmail(value) {
+  const email = normalizeEmail(value);
+  return AUTH_BYPASS_EMAILS.includes(email) ? email : "";
+}
+
+function authFailureMessage(error) {
+  const message = error?.message || "알 수 없는 오류";
+  if (message.toLowerCase().includes("rate limit")) {
+    return "로그인 링크 전송 실패: Supabase 기본 메일 발송 한도에 걸렸습니다. 잠시 후 다시 시도하거나, 테스트 계정이면 임시 통과로 접속하세요.";
+  }
+  return `로그인 링크 전송 실패: ${message}`;
 }
 
 function stepTagLabel(tag) {
@@ -2096,7 +2109,7 @@ export default function App() {
   const [authEmail, setAuthEmail] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
-  const [authBypass, setAuthBypass] = useState(() => localStorage.getItem(AUTH_BYPASS_STORAGE_KEY) === AUTH_BYPASS_EMAIL);
+  const [authBypass, setAuthBypass] = useState(() => authBypassEmail(localStorage.getItem(AUTH_BYPASS_STORAGE_KEY)));
   const [loaded, setLoaded] = useState(false);
   const [storageMode, setStorageMode] = useState(isSupabaseConfigured ? "loading" : "local");
   const [storageMessage, setStorageMessage] = useState(
@@ -2162,7 +2175,7 @@ export default function App() {
       if (!session?.user?.id && authBypass) {
         applyState(localState);
         setStorageMode("bypass");
-        setStorageMessage(`${AUTH_BYPASS_EMAIL} 임시 통과 중입니다. 인증 세션이 없어 이 브라우저에만 저장됩니다.`);
+        setStorageMessage(`${authBypass} 임시 통과 중입니다. 인증 세션이 없어 이 브라우저에만 저장됩니다.`);
         setLoaded(true);
         return;
       }
@@ -2228,7 +2241,7 @@ export default function App() {
   const visibleSystemOptions = form.system && !systemOptions.includes(form.system) ? [form.system, ...systemOptions] : systemOptions;
   const workGroups = useMemo(() => buildWorkRecordGroups(workRecords, standards), [workRecords, standards]);
   const recommendedPpe = useMemo(() => getRecommendedPpeForRisks(form.risks, form.permit), [form.risks, form.permit]);
-  const bypassLabel = authBypass && !session?.user?.id ? `${AUTH_BYPASS_EMAIL} · 임시` : "";
+  const bypassLabel = authBypass && !session?.user?.id ? `${authBypass} · 임시` : "";
   const needsLogin = isSupabaseConfigured && authReady && !session?.user?.id && !authBypass;
 
   const sendAuthLink = async () => {
@@ -2238,12 +2251,13 @@ export default function App() {
       return;
     }
 
-    if (normalizeEmail(email) === AUTH_BYPASS_EMAIL) {
-      localStorage.setItem(AUTH_BYPASS_STORAGE_KEY, AUTH_BYPASS_EMAIL);
-      setAuthBypass(true);
-      setAuthMessage(`${AUTH_BYPASS_EMAIL} 임시 통과를 적용했습니다. 인증 전까지 이 브라우저에만 저장됩니다.`);
+    const bypassEmail = authBypassEmail(email);
+    if (bypassEmail) {
+      localStorage.setItem(AUTH_BYPASS_STORAGE_KEY, bypassEmail);
+      setAuthBypass(bypassEmail);
+      setAuthMessage(`${bypassEmail} 임시 통과를 적용했습니다. 인증 전까지 이 브라우저에만 저장됩니다.`);
       setStorageMode("bypass");
-      setStorageMessage(`${AUTH_BYPASS_EMAIL} 임시 통과 중입니다. 인증 세션이 없어 이 브라우저에만 저장됩니다.`);
+      setStorageMessage(`${bypassEmail} 임시 통과 중입니다. 인증 세션이 없어 이 브라우저에만 저장됩니다.`);
       return;
     }
 
@@ -2253,7 +2267,7 @@ export default function App() {
       await sendLoginLink(email);
       setAuthMessage("이메일로 로그인 링크를 보냈습니다. 메일의 링크를 열면 이 기기에서 로그인됩니다.");
     } catch (error) {
-      setAuthMessage(`로그인 링크 전송 실패: ${error.message}`);
+      setAuthMessage(authFailureMessage(error));
     } finally {
       setAuthLoading(false);
     }
@@ -2263,7 +2277,7 @@ export default function App() {
     try {
       if (session?.user?.id) await signOut();
       localStorage.removeItem(AUTH_BYPASS_STORAGE_KEY);
-      setAuthBypass(false);
+      setAuthBypass("");
       setSession(null);
       setStorageMode("auth");
       setStorageMessage("로그아웃되었습니다. 다시 로그인하면 Supabase 데이터를 불러옵니다.");
