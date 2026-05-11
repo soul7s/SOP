@@ -211,3 +211,6 @@ to authenticated
 using ((select auth.uid()) = owner_id);
 
 commit;
+
+-- Force Supabase/PostgREST to refresh its schema cache after the column changes.
+notify pgrst, 'reload schema';
