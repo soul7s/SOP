@@ -1,56 +1,43 @@
+-- SOP app secure storage migration
+-- Run this once in Supabase SQL Editor after enabling Email Auth.
+--
+-- Important:
+-- This migration switches prototype public data to per-login-user data.
+-- Existing prototype rows with no owner_id are deleted to avoid primary-key
+-- conflicts during the first authenticated sync. If you need to preserve
+-- those rows, copy your user UUID from Authentication > Users and set
+-- owner_id on those rows before running the delete statements below.
+
+begin;
+
 create extension if not exists pgcrypto;
 
-create table if not exists public.standards (
-  id text primary key,
-  owner_id uuid not null references auth.users(id) on delete cascade,
-  title text not null default '작업명 미입력',
-  work_type text,
-  equipment text,
-  tag text,
-  system text,
-  rev text not null default 'Rev.01',
-  saved_at timestamptz not null default now(),
-  form jsonb not null default '{}'::jsonb,
-  draft jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+alter table public.standards
+  add column if not exists owner_id uuid references auth.users(id) on delete cascade;
 
-create table if not exists public.standard_revisions (
-  id text primary key,
-  owner_id uuid not null references auth.users(id) on delete cascade,
-  standard_id text not null references public.standards(id) on delete cascade,
-  rev text not null,
-  saved_at timestamptz not null default now(),
-  author text,
-  summary text,
-  form jsonb not null default '{}'::jsonb,
-  draft jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  unique (standard_id, rev)
-);
+alter table public.standard_revisions
+  add column if not exists owner_id uuid references auth.users(id) on delete cascade;
 
-create table if not exists public.app_settings (
-  owner_id uuid not null references auth.users(id) on delete cascade,
-  key text not null,
-  value jsonb not null default 'null'::jsonb,
-  updated_at timestamptz not null default now(),
-  primary key (owner_id, key)
-);
+alter table public.app_settings
+  add column if not exists owner_id uuid references auth.users(id) on delete cascade;
 
-create table if not exists public.work_runs (
-  id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users(id) on delete cascade,
-  standard_id text references public.standards(id) on delete set null,
-  standard_rev text,
-  work_date date not null default current_date,
-  status text not null default 'draft',
-  tbm jsonb not null default '{}'::jsonb,
-  checklist jsonb not null default '[]'::jsonb,
-  result jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+alter table public.work_runs
+  add column if not exists owner_id uuid references auth.users(id) on delete cascade;
+
+-- Remove rows created by the earlier no-login prototype policy.
+delete from public.standard_revisions where owner_id is null;
+delete from public.work_runs where owner_id is null;
+delete from public.standards where owner_id is null;
+delete from public.app_settings where owner_id is null;
+
+alter table public.standards alter column owner_id set not null;
+alter table public.standard_revisions alter column owner_id set not null;
+alter table public.app_settings alter column owner_id set not null;
+alter table public.work_runs alter column owner_id set not null;
+
+alter table public.app_settings drop constraint if exists app_settings_pkey;
+alter table public.app_settings
+  add constraint app_settings_pkey primary key (owner_id, key);
 
 create index if not exists standards_owner_saved_at_idx
   on public.standards(owner_id, saved_at desc);
@@ -60,26 +47,6 @@ create index if not exists standard_revisions_owner_standard_idx
 
 create index if not exists work_runs_owner_work_date_idx
   on public.work_runs(owner_id, work_date desc);
-
-create or replace function public.set_updated_at()
-returns trigger
-language plpgsql
-as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
-
-drop trigger if exists standards_set_updated_at on public.standards;
-create trigger standards_set_updated_at
-before update on public.standards
-for each row execute function public.set_updated_at();
-
-drop trigger if exists work_runs_set_updated_at on public.work_runs;
-create trigger work_runs_set_updated_at
-before update on public.work_runs
-for each row execute function public.set_updated_at();
 
 alter table public.standards enable row level security;
 alter table public.standard_revisions enable row level security;
@@ -242,3 +209,5 @@ create policy "users can delete own work runs"
 on public.work_runs for delete
 to authenticated
 using ((select auth.uid()) = owner_id);
+
+commit;

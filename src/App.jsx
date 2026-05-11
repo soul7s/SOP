@@ -10,16 +10,20 @@ import {
   Edit3,
   FileText,
   History,
+  KeyRound,
   Library,
   ListChecks,
+  LogOut,
+  Mail,
   Plus,
   Printer,
   Save,
   ShieldCheck,
   Sparkles,
   Trash2,
+  UserRound,
 } from "lucide-react";
-import { isSupabaseConfigured } from "./supabaseClient";
+import { getAuthSession, isSupabaseConfigured, onAuthSessionChange, sendLoginLink, signOut } from "./supabaseClient";
 import {
   deleteStandardFromRemote,
   deleteWorkRecordFromRemote,
@@ -987,16 +991,52 @@ function SystemOptionsEditor({ options, selected, newValue, onNewValueChange, on
 function StorageStatus({ mode, message }) {
   const isRemote = mode === "remote";
   const isLoading = mode === "loading";
-  const Icon = isRemote ? Database : CloudOff;
+  const isAuth = mode === "auth";
+  const Icon = isRemote ? Database : isAuth ? KeyRound : CloudOff;
 
   return (
-    <div className={`storage-status ${isRemote ? "remote" : ""} ${isLoading ? "loading" : ""}`}>
+    <div className={`storage-status ${isRemote ? "remote" : ""} ${isAuth ? "auth" : ""} ${isLoading ? "loading" : ""}`}>
       <Icon size={15} />
       <div>
-        <strong>{isLoading ? "저장소 확인 중" : isRemote ? "Supabase 저장" : "브라우저 저장"}</strong>
+        <strong>{isLoading ? "저장소 확인 중" : isRemote ? "Supabase 저장" : isAuth ? "로그인 필요" : "브라우저 저장"}</strong>
         <p>{message}</p>
       </div>
     </div>
+  );
+}
+
+function AuthPanel({ email, message, loading, onEmailChange, onSendLink }) {
+  return (
+    <section className="auth-panel">
+      <div className="auth-card">
+        <div className="auth-icon">
+          <KeyRound size={24} />
+        </div>
+        <div>
+          <span className="eyebrow">Supabase Auth</span>
+          <h3>로그인 후 SOP 저장소를 사용합니다.</h3>
+          <p>이메일 인증 링크로 로그인하면 표준서, 이력, 작업기록이 해당 사용자 데이터로만 저장됩니다.</p>
+        </div>
+        <div className="auth-form">
+          <label className="field">
+            <span>이메일</span>
+            <input
+              className="input"
+              type="email"
+              value={email}
+              placeholder="name@company.com"
+              onChange={(event) => onEmailChange(event.target.value)}
+              onKeyDown={(event) => event.key === "Enter" && onSendLink()}
+            />
+          </label>
+          <button type="button" className="button primary" onClick={onSendLink} disabled={loading}>
+            <Mail size={16} />
+            {loading ? "전송 중" : "로그인 링크 받기"}
+          </button>
+        </div>
+        {message && <div className="auth-message">{message}</div>}
+      </div>
+    </section>
   );
 }
 
@@ -1727,11 +1767,44 @@ export default function App() {
   const [systemOptions, setSystemOptions] = useState(DEFAULT_SYSTEMS);
   const [newSystemOption, setNewSystemOption] = useState("");
   const [examplesSeeded, setExamplesSeeded] = useState(false);
+  const [session, setSession] = useState(null);
+  const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [storageMode, setStorageMode] = useState(isSupabaseConfigured ? "loading" : "local");
   const [storageMessage, setStorageMessage] = useState(
-    isSupabaseConfigured ? "공용 데이터 저장소 연결을 확인하고 있습니다." : "공용 저장소 연결값이 없어 이 브라우저에만 저장됩니다.",
+    isSupabaseConfigured ? "로그인 상태와 공용 데이터 저장소를 확인하고 있습니다." : "공용 저장소 연결값이 없어 이 브라우저에만 저장됩니다.",
   );
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return undefined;
+
+    let isMounted = true;
+
+    getAuthSession()
+      .then((nextSession) => {
+        if (!isMounted) return;
+        setSession(nextSession);
+        setAuthReady(true);
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        setAuthReady(true);
+        setAuthMessage(`로그인 상태 확인이 필요합니다. (${error.message})`);
+      });
+
+    const unsubscribe = onAuthSessionChange((nextSession) => {
+      setSession(nextSession);
+      setAuthReady(true);
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -1748,6 +1821,9 @@ export default function App() {
     };
 
     async function loadInitialState() {
+      if (isSupabaseConfigured && !authReady) return;
+
+      setLoaded(false);
       const localState = readLocalState();
 
       if (!isSupabaseConfigured) {
@@ -1758,12 +1834,20 @@ export default function App() {
         return;
       }
 
+      if (!session?.user?.id) {
+        applyState(localState);
+        setStorageMode("auth");
+        setStorageMessage("로그인하면 Supabase 저장소에 안전하게 동기화됩니다. 지금은 이 브라우저 임시 데이터만 표시됩니다.");
+        setLoaded(true);
+        return;
+      }
+
       try {
         const remoteState = await loadRemoteState();
         if (!isMounted) return;
         applyState(buildRemoteRuntimeState(remoteState, localState));
         setStorageMode("remote");
-        setStorageMessage("Supabase와 연결되었습니다.");
+        setStorageMessage(`${session.user.email || "로그인 사용자"} 계정으로 Supabase와 연결되었습니다.`);
       } catch (error) {
         if (!isMounted) return;
         applyState(localState);
@@ -1778,7 +1862,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [authReady, session?.user?.id]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -1786,11 +1870,15 @@ export default function App() {
   }, [form, draft, docTab, standards, workRecords, activeStandardId, examplesSeeded, systemOptions, loaded]);
 
   useEffect(() => {
-    if (!loaded || storageMode !== "remote") return undefined;
+    if (!loaded || storageMode !== "remote" || !session?.user?.id) return undefined;
 
     const timeoutId = window.setTimeout(async () => {
       try {
-        await Promise.all([saveStandardsToRemote(standards), saveWorkRecordsToRemote(workRecords), saveSystemOptionsToRemote(systemOptions)]);
+        await Promise.all([
+          saveStandardsToRemote(standards, session.user.id),
+          saveWorkRecordsToRemote(workRecords, session.user.id),
+          saveSystemOptionsToRemote(systemOptions, session.user.id),
+        ]);
         setStorageMessage(`Supabase 동기화 완료 · ${formatDateTime(new Date().toISOString())}`);
       } catch (error) {
         setStorageMode("local");
@@ -1799,13 +1887,44 @@ export default function App() {
     }, 700);
 
     return () => window.clearTimeout(timeoutId);
-  }, [standards, workRecords, systemOptions, loaded, storageMode]);
+  }, [standards, workRecords, systemOptions, loaded, storageMode, session?.user?.id]);
 
   const isDraftReady = draft.steps.length > 0 || draft.preChecks.length > 0;
   const activeStandard = standards.find((standard) => standard.id === activeStandardId);
   const isViewingPastRevision = Boolean(selectedRevisionRev && activeStandard && selectedRevisionRev !== activeStandard.rev);
   const visibleSystemOptions = form.system && !systemOptions.includes(form.system) ? [form.system, ...systemOptions] : systemOptions;
   const workGroups = useMemo(() => buildWorkRecordGroups(workRecords, standards), [workRecords, standards]);
+  const needsLogin = isSupabaseConfigured && authReady && !session?.user?.id;
+
+  const sendAuthLink = async () => {
+    const email = authEmail.trim();
+    if (!email) {
+      setAuthMessage("로그인 링크를 받을 이메일을 입력해주세요.");
+      return;
+    }
+
+    setAuthLoading(true);
+    setAuthMessage("");
+    try {
+      await sendLoginLink(email);
+      setAuthMessage("이메일로 로그인 링크를 보냈습니다. 메일의 링크를 열면 이 기기에서 로그인됩니다.");
+    } catch (error) {
+      setAuthMessage(`로그인 링크 전송 실패: ${error.message}`);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      setSession(null);
+      setStorageMode("auth");
+      setStorageMessage("로그아웃되었습니다. 다시 로그인하면 Supabase 데이터를 불러옵니다.");
+    } catch (error) {
+      setAuthMessage(`로그아웃 실패: ${error.message}`);
+    }
+  };
 
   const updateForm = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -2059,6 +2178,15 @@ export default function App() {
             <h2>{form.title || "작업표준서 생성기"}</h2>
           </div>
           <div className="topbar-actions">
+            {session?.user?.email && (
+              <div className="account-pill">
+                <UserRound size={14} />
+                <span>{session.user.email}</span>
+                <button type="button" onClick={handleSignOut} aria-label="로그아웃" title="로그아웃">
+                  <LogOut size={14} />
+                </button>
+              </div>
+            )}
             <button type="button" className="button ghost" onClick={() => setCurrentStep(3)}>
               <Library size={16} />
               SOP 보관함
@@ -2078,7 +2206,20 @@ export default function App() {
           </div>
         </header>
 
-        {currentStep === 0 && (
+        {needsLogin && (
+          <AuthPanel
+            email={authEmail}
+            message={authMessage}
+            loading={authLoading}
+            onEmailChange={(value) => {
+              setAuthEmail(value);
+              setAuthMessage("");
+            }}
+            onSendLink={sendAuthLink}
+          />
+        )}
+
+        {!needsLogin && currentStep === 0 && (
           <WorkRecordPanel
             record={workRecordForm}
             systemOptions={systemOptions}
@@ -2090,15 +2231,15 @@ export default function App() {
           />
         )}
 
-        {currentStep === 1 && (
+        {!needsLogin && currentStep === 1 && (
           <WorkRecordLibrary records={workRecords} onEdit={editWorkRecord} onDelete={deleteWorkRecord} />
         )}
 
-        {currentStep === 2 && (
+        {!needsLogin && currentStep === 2 && (
           <WorkAnalysisPanel groups={workGroups} recordsCount={workRecords.length} onPromote={promoteWorkGroup} />
         )}
 
-        {currentStep === 3 && (
+        {!needsLogin && currentStep === 3 && (
           <StandardLibrary
             standards={standards}
             onCreateNew={createNewStandard}
@@ -2109,7 +2250,7 @@ export default function App() {
           />
         )}
 
-        {currentStep === 4 && (
+        {!needsLogin && currentStep === 4 && (
           <Section title="기본 정보" icon={FileText}>
             {activeStandard && (
               <div className="active-standard-note">
@@ -2150,7 +2291,7 @@ export default function App() {
           </Section>
         )}
 
-        {currentStep === 5 && (
+        {!needsLogin && currentStep === 5 && (
           <Section title="작업 조건 및 위험 판단" icon={AlertTriangle}>
             <div className="form-grid">
               <SelectField label="정지/전환 조건" value={form.shutdownMode} onChange={(value) => updateForm("shutdownMode", value)} options={SHUTDOWN_MODES} />
@@ -2179,7 +2320,7 @@ export default function App() {
           </Section>
         )}
 
-        {currentStep === 6 && (
+        {!needsLogin && currentStep === 6 && (
           <Section title="초안 생성" icon={Sparkles}>
             <div className="draft-summary">
               <div>
@@ -2216,7 +2357,7 @@ export default function App() {
           </Section>
         )}
 
-        {currentStep === 7 && (
+        {!needsLogin && currentStep === 7 && (
           <div className="edit-stack">
             {saveMessage && <div className="save-message">{saveMessage}</div>}
             <Section
@@ -2332,7 +2473,7 @@ export default function App() {
           </div>
         )}
 
-        {currentStep === 8 && (
+        {!needsLogin && currentStep === 8 && (
           <Section
             title={docTab === "standard" ? "표준서 출력" : "오늘 작업 출력"}
             icon={Printer}

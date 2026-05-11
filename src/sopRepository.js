@@ -8,14 +8,22 @@ function ensureSupabase() {
   }
 }
 
+function ensureOwnerId(ownerId) {
+  if (!ownerId) {
+    throw new Error("로그인 사용자 정보가 없어 Supabase에 저장할 수 없습니다.");
+  }
+  return ownerId;
+}
+
 function describeError(error) {
   if (!error) return "알 수 없는 Supabase 오류";
   return [error.message, error.details, error.hint].filter(Boolean).join(" ");
 }
 
-function toStandardRow(standard) {
+function toStandardRow(standard, ownerId) {
   return {
     id: standard.id,
+    owner_id: ensureOwnerId(ownerId),
     title: standard.title || standard.form?.title || "작업명 미입력",
     work_type: standard.form?.workType || "",
     equipment: standard.equipment || standard.form?.equipment || "",
@@ -28,9 +36,10 @@ function toStandardRow(standard) {
   };
 }
 
-function toRevisionRow(standardId, revision) {
+function toRevisionRow(standardId, revision, ownerId) {
   return {
     id: revision.id,
+    owner_id: ensureOwnerId(ownerId),
     standard_id: standardId,
     rev: revision.rev || revision.form?.rev || "Rev.01",
     saved_at: revision.savedAt || new Date().toISOString(),
@@ -68,9 +77,10 @@ function fromStandardRow(row, revisions) {
   };
 }
 
-function toWorkRecordRow(record) {
+function toWorkRecordRow(record, ownerId) {
   return {
     id: record.id,
+    owner_id: ensureOwnerId(ownerId),
     standard_id: record.standardId || null,
     standard_rev: record.standardRev || null,
     work_date: record.workDate || new Date().toISOString().slice(0, 10),
@@ -121,10 +131,11 @@ export async function loadRemoteState() {
   };
 }
 
-export async function saveStandardsToRemote(standards) {
+export async function saveStandardsToRemote(standards, ownerId) {
   ensureSupabase();
-  const standardRows = standards.map(toStandardRow);
-  const revisionRows = standards.flatMap((standard) => (standard.revisions || []).map((revision) => toRevisionRow(standard.id, revision)));
+  ensureOwnerId(ownerId);
+  const standardRows = standards.map((standard) => toStandardRow(standard, ownerId));
+  const revisionRows = standards.flatMap((standard) => (standard.revisions || []).map((revision) => toRevisionRow(standard.id, revision, ownerId)));
 
   if (standardRows.length) {
     const { error } = await supabase.from("standards").upsert(standardRows, { onConflict: "id" });
@@ -137,22 +148,25 @@ export async function saveStandardsToRemote(standards) {
   }
 }
 
-export async function saveSystemOptionsToRemote(systemOptions) {
+export async function saveSystemOptionsToRemote(systemOptions, ownerId) {
   ensureSupabase();
+  ensureOwnerId(ownerId);
   const { error } = await supabase.from("app_settings").upsert(
     {
       key: SYSTEM_OPTIONS_KEY,
+      owner_id: ownerId,
       value: systemOptions,
       updated_at: new Date().toISOString(),
     },
-    { onConflict: "key" },
+    { onConflict: "owner_id,key" },
   );
   if (error) throw new Error(describeError(error));
 }
 
-export async function saveWorkRecordsToRemote(workRecords) {
+export async function saveWorkRecordsToRemote(workRecords, ownerId) {
   ensureSupabase();
-  const rows = workRecords.map(toWorkRecordRow);
+  ensureOwnerId(ownerId);
+  const rows = workRecords.map((record) => toWorkRecordRow(record, ownerId));
   if (!rows.length) return;
 
   const { error } = await supabase.from("work_runs").upsert(rows, { onConflict: "id" });
