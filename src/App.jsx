@@ -77,6 +77,12 @@ const DOC_TABS = [
 ];
 
 const STORAGE_KEY = "plant-work-standard-builder:v1";
+const AUTH_BYPASS_EMAIL = "jisun_1@naver.com";
+const AUTH_BYPASS_STORAGE_KEY = `${STORAGE_KEY}:auth-bypass`;
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
 
 function stepTagLabel(tag) {
   return LEGACY_TAG_LABELS[tag] || tag || "확인";
@@ -1196,13 +1202,14 @@ function StorageStatus({ mode, message }) {
   const isRemote = mode === "remote";
   const isLoading = mode === "loading";
   const isAuth = mode === "auth";
-  const Icon = isRemote ? Database : isAuth ? KeyRound : CloudOff;
+  const isBypass = mode === "bypass";
+  const Icon = isRemote ? Database : isAuth || isBypass ? KeyRound : CloudOff;
 
   return (
-    <div className={`storage-status ${isRemote ? "remote" : ""} ${isAuth ? "auth" : ""} ${isLoading ? "loading" : ""}`}>
+    <div className={`storage-status ${isRemote ? "remote" : ""} ${isAuth || isBypass ? "auth" : ""} ${isLoading ? "loading" : ""}`}>
       <Icon size={15} />
       <div>
-        <strong>{isLoading ? "저장소 확인 중" : isRemote ? "Supabase 저장" : isAuth ? "로그인 필요" : "브라우저 저장"}</strong>
+        <strong>{isLoading ? "저장소 확인 중" : isRemote ? "Supabase 저장" : isBypass ? "임시 통과" : isAuth ? "로그인 필요" : "브라우저 저장"}</strong>
         <p>{message}</p>
       </div>
     </div>
@@ -1226,7 +1233,8 @@ function AuthPanel({ email, message, loading, onEmailChange, onSendLink }) {
             <span>이메일</span>
             <input
               className="input"
-              type="email"
+              type="text"
+              inputMode="email"
               value={email}
               placeholder="name@company.com"
               onChange={(event) => onEmailChange(event.target.value)}
@@ -1985,6 +1993,7 @@ export default function App() {
   const [authEmail, setAuthEmail] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [authBypass, setAuthBypass] = useState(() => localStorage.getItem(AUTH_BYPASS_STORAGE_KEY) === AUTH_BYPASS_EMAIL);
   const [loaded, setLoaded] = useState(false);
   const [storageMode, setStorageMode] = useState(isSupabaseConfigured ? "loading" : "local");
   const [storageMessage, setStorageMessage] = useState(
@@ -2047,6 +2056,14 @@ export default function App() {
         return;
       }
 
+      if (!session?.user?.id && authBypass) {
+        applyState(localState);
+        setStorageMode("bypass");
+        setStorageMessage(`${AUTH_BYPASS_EMAIL} 임시 통과 중입니다. 인증 세션이 없어 이 브라우저에만 저장됩니다.`);
+        setLoaded(true);
+        return;
+      }
+
       if (!session?.user?.id) {
         applyState(localState);
         setStorageMode("auth");
@@ -2075,7 +2092,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [authReady, session?.user?.id]);
+  }, [authReady, session?.user?.id, authBypass]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -2108,12 +2125,22 @@ export default function App() {
   const visibleSystemOptions = form.system && !systemOptions.includes(form.system) ? [form.system, ...systemOptions] : systemOptions;
   const workGroups = useMemo(() => buildWorkRecordGroups(workRecords, standards), [workRecords, standards]);
   const recommendedPpe = useMemo(() => getRecommendedPpeForRisks(form.risks), [form.risks]);
-  const needsLogin = isSupabaseConfigured && authReady && !session?.user?.id;
+  const bypassLabel = authBypass && !session?.user?.id ? `${AUTH_BYPASS_EMAIL} · 임시` : "";
+  const needsLogin = isSupabaseConfigured && authReady && !session?.user?.id && !authBypass;
 
   const sendAuthLink = async () => {
     const email = authEmail.trim();
     if (!email) {
       setAuthMessage("로그인 링크를 받을 이메일을 입력해주세요.");
+      return;
+    }
+
+    if (normalizeEmail(email) === AUTH_BYPASS_EMAIL) {
+      localStorage.setItem(AUTH_BYPASS_STORAGE_KEY, AUTH_BYPASS_EMAIL);
+      setAuthBypass(true);
+      setAuthMessage(`${AUTH_BYPASS_EMAIL} 임시 통과를 적용했습니다. 인증 전까지 이 브라우저에만 저장됩니다.`);
+      setStorageMode("bypass");
+      setStorageMessage(`${AUTH_BYPASS_EMAIL} 임시 통과 중입니다. 인증 세션이 없어 이 브라우저에만 저장됩니다.`);
       return;
     }
 
@@ -2131,7 +2158,9 @@ export default function App() {
 
   const handleSignOut = async () => {
     try {
-      await signOut();
+      if (session?.user?.id) await signOut();
+      localStorage.removeItem(AUTH_BYPASS_STORAGE_KEY);
+      setAuthBypass(false);
       setSession(null);
       setStorageMode("auth");
       setStorageMessage("로그아웃되었습니다. 다시 로그인하면 Supabase 데이터를 불러옵니다.");
@@ -2408,11 +2437,11 @@ export default function App() {
             <h2>{form.title || "작업표준서 생성기"}</h2>
           </div>
           <div className="topbar-actions">
-            {session?.user?.email && (
+            {(session?.user?.email || bypassLabel) && (
               <div className="account-pill">
                 <UserRound size={14} />
-                <span>{session.user.email}</span>
-                <button type="button" onClick={handleSignOut} aria-label="로그아웃" title="로그아웃">
+                <span>{session?.user?.email || bypassLabel}</span>
+                <button type="button" onClick={handleSignOut} aria-label={authBypass ? "임시 통과 해제" : "로그아웃"} title={authBypass ? "임시 통과 해제" : "로그아웃"}>
                   <LogOut size={14} />
                 </button>
               </div>
