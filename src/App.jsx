@@ -48,6 +48,20 @@ const PERMIT_OPTIONS = ["불필요", "일반작업허가", "화기작업허가",
 const LOTO_OPTIONS = ["불필요", "필요", "조건부 필요"];
 const JUDGEMENT_OPTIONS = ["즉시조치", "계획정비 반영", "모니터링 유지", "외부전문가 확인"];
 const RISK_OPTIONS = ["전기", "압력", "고온", "저온", "회전체", "화학물질", "고소", "중량물", "누출", "소음", "협착"];
+const PPE_OPTIONS = ["안전모", "안전화", "방진마스크", "보안경", "장갑"];
+const PPE_BY_RISK = {
+  전기: ["안전모", "안전화", "보안경", "장갑"],
+  압력: ["안전모", "안전화", "보안경", "장갑"],
+  고온: ["안전모", "안전화", "보안경", "장갑"],
+  저온: ["안전모", "안전화", "보안경", "장갑"],
+  회전체: ["안전모", "안전화", "보안경", "장갑"],
+  화학물질: ["안전모", "안전화", "방진마스크", "보안경", "장갑"],
+  고소: ["안전모", "안전화", "장갑"],
+  중량물: ["안전모", "안전화", "장갑"],
+  누출: ["안전모", "안전화", "보안경", "장갑"],
+  소음: ["안전모", "안전화"],
+  협착: ["안전모", "안전화", "장갑"],
+};
 const PROC_TAGS = ["확인", "측정", "안전주의", "조작"];
 const LEGACY_TAG_LABELS = {
   CHECK: "확인",
@@ -156,6 +170,7 @@ const defaultForm = {
   operationState: "운전 중 이상소음 발생, 누설 없음, 진동 증가 의심",
   purpose: "이상소음 원인을 확인하고 운전 안정성을 확보한다.",
   risks: ["전기", "압력", "회전체", "소음"],
+  ppe: ["안전모", "안전화", "보안경", "장갑"],
   toolsText: "진동계, 적외선 온도계, 청진봉, 렌치, 휴대용 조명",
   sparesText: "그리스, 커플링 고무, 패킹, 베어링",
   notes: "운전부서와 예비펌프 전환 가능 여부를 먼저 협의한다.",
@@ -181,6 +196,7 @@ function makeBlankForm() {
     operationState: "",
     purpose: "",
     risks: [],
+    ppe: ["안전모", "안전화"],
     toolsText: "",
     sparesText: "",
     notes: "",
@@ -455,15 +471,116 @@ function makeDefaultInspection(form) {
   return base;
 }
 
+function getProcedureFocus(form) {
+  const focusBySystem = {
+    용수: {
+      baseline: "흡입/토출압력, 운전전류, 베어링 온도, 진동, 누수 상태를 작업 전 기준값으로 남긴다.",
+      cause: "흡입측 밸브 개도, 스트레이너 막힘, 에어 혼입, 커플링/베어링 이상, 기초볼트 이완을 순서대로 확인한다.",
+      recovery: "예비기 전환 상태, 밸브 원위치, 누수 여부, 펌프 운전값 안정화를 운전부서와 함께 확인한다.",
+    },
+    에어: {
+      baseline: "헤더 압력, 컴프레서 로딩률, 드레인 상태, 주요 사용처 밸브 상태를 기준값으로 남긴다.",
+      cause: "누기음, 피팅/밸브 누설, 드레인 트랩 막힘, 사용처 급증, 필터 차압 상승을 순서대로 확인한다.",
+      recovery: "압력 회복 추이와 누기 재발 여부를 확인하고 사용처 조작 사항을 운전부서에 인계한다.",
+    },
+    "산소/질소": {
+      baseline: "공급압력, 퍼지 상태, 산소농도 또는 질소 치환 영향, 밸브 라인업을 기준값으로 남긴다.",
+      cause: "압력조정기, 체크밸브, 퍼지 라인, 사용처 밸브 개도, 누설 가능 지점을 순서대로 확인한다.",
+      recovery: "가스 방출 위험이 없는지 확인하고 공급압력 안정화 후 주변 출입통제를 해제한다.",
+    },
+    DIW: {
+      baseline: "토출유량, 압력, 수질 영향 가능성, 약품/필터 상태, 누수 상태를 기준값으로 남긴다.",
+      cause: "흡입측 에어 혼입, 체크밸브 막힘, 다이어프램 손상, 필터 차압, 약품 잔량을 순서대로 확인한다.",
+      recovery: "수질 영향 여부와 약품 주입량 회복을 확인하고 필요 시 재샘플링 계획을 남긴다.",
+    },
+    배관: {
+      baseline: "밸브 개도, 라인 압력, 온도, 지지대 상태, 누설 위치와 누설량을 기준값으로 남긴다.",
+      cause: "플랜지 체결, 가스켓 손상, 열팽창 간섭, 행거 이탈, 밸브 패킹 상태를 순서대로 확인한다.",
+      recovery: "누설 확대 여부와 배관 지지상태를 재확인하고 임시조치 한계를 명확히 인계한다.",
+    },
+    시설물: {
+      baseline: "주변 접근성, 구조물 손상, 배수/누수 흔적, 작업공간 장애물을 기준 상태로 남긴다.",
+      cause: "고정상태, 균열, 배수 불량, 부식, 외력 흔적을 순서대로 확인한다.",
+      recovery: "임시 통제, 보강 필요 여부, 후속 보수 일정을 기록한다.",
+    },
+    전기: {
+      baseline: "전압, 전류, 절연상태, 차단기/계전기 표시, 이상 냄새나 열감을 기준값으로 남긴다.",
+      cause: "부하측 절연저하, 단자 이완, 과부하, 보조접점 이상, 반복 트립 이력을 순서대로 확인한다.",
+      recovery: "무부하/부하 투입 조건과 재투입 가능 여부를 전기 담당자와 확인한다.",
+    },
+    공조: {
+      baseline: "팬 전류, 벨트 장력, 풍량, 온습도, 진동/소음을 기준값으로 남긴다.",
+      cause: "필터 차압, 벨트 마모/장력, 댐퍼 개도, 베어링, 응축수 배수 상태를 순서대로 확인한다.",
+      recovery: "풍량과 온습도 회복, 커버 복구, 자동기동 조건을 확인한다.",
+    },
+    기타: {
+      baseline: "현장 운전값, 알람, 외관, 작업 전 사진을 기준 상태로 남긴다.",
+      cause: "최근 변경사항, 체결상태, 오염/막힘, 센서 이상, 운전조건 변화를 순서대로 확인한다.",
+      recovery: "작업 전후 차이를 비교하고 잔여 리스크와 후속 확인 항목을 남긴다.",
+    },
+  };
+  return focusBySystem[form.system] || focusBySystem.기타;
+}
+
+function getWorkTypeAction(form, spares) {
+  if (form.workType === "교체") {
+    return {
+      action: "교체 대상 부품의 규격, 방향, 체결면 상태를 확인한 뒤 기존품을 분리하고 신품을 조립한다.",
+      note: spares.length ? `적용 예비품: ${spares.join(", ")}. 가스켓/오링/체결부 손상 여부를 조립 전 재확인` : "기존품 상태를 사진으로 남기고 신품 규격과 방향성을 대조",
+    };
+  }
+  if (form.workType === "운전") {
+    return {
+      action: "운전 조건을 단계적으로 변경하면서 설비 반응값을 확인한다.",
+      note: "밸브 개도, 기동/정지, 부하 변경은 운전부서 지시와 현장 신호체계를 맞춘 뒤 수행",
+    };
+  }
+  if (form.workType === "기타") {
+    return {
+      action: "승인된 작업 범위 안에서 응급조치 또는 임시조치를 수행한다.",
+      note: "임시조치 한계, 재발 가능성, 계획정비 전환 필요 여부를 작업 중 판단",
+    };
+  }
+  return {
+    action: "원인 후보별로 점검 순서를 정하고 측정값과 육안 상태를 대조한다.",
+    note: "정상 기준, 평상시 값, 동일 계통 설비와 비교하여 원인을 좁혀감",
+  };
+}
+
+function makeDetailedProcedureSteps(form, spares, selectedPpe) {
+  const focus = getProcedureFocus(form);
+  const workAction = getWorkTypeAction(form, spares);
+  const target = [form.equipment, form.tag].filter(Boolean).join(" / ") || "작업 대상 설비";
+
+  return [
+    { tag: "확인", action: "작업 요청 내용, 최근 알람, 이전 작업 이력, 운전 로그를 확인한다.", note: form.operationState || "증상 발생 시점, 반복 여부, 운전 조건 변화 여부 확인" },
+    { tag: "확인", action: `${target}와 현장 설비 TAG를 대조하고 작업 경계를 표시한다.`, note: "동일 계통 예비기, 병렬 라인, 인접 설비와 혼동되지 않도록 작업 범위 지정" },
+    { tag: "안전주의", action: "TBM을 실시하고 작업자 역할, 연락수단, 중단 기준을 공유한다.", note: `필수 보호구: ${selectedPpe.join(", ") || "현장 위험성 평가 기준 적용"}` },
+    { tag: "안전주의", action: "운전부서와 정지, 전환, 복구 조건을 합의하고 작업허가 조건을 확인한다.", note: `${form.shutdownMode} / ${form.permit} / LOTO ${form.loto}` },
+    { tag: "안전주의", action: "전기, 압력, 자동기동, 잔류에너지 차단 상태를 확인한다.", note: "격리 지점, 잠금/표지, 잔압 제거, 검전 또는 무압 상태를 2인 확인" },
+    { tag: "측정", action: "작업 전 기준값을 측정하고 사진 또는 수치로 기록한다.", note: focus.baseline },
+    { tag: "확인", action: "외관, 체결, 누설, 오염, 이물질, 커버 상태를 무분해 범위에서 먼저 확인한다.", note: "분해 전 확인 가능한 원인을 먼저 제거하여 불필요한 정지를 줄임" },
+    { tag: "측정", action: "계통 특성에 맞는 원인 후보를 순서대로 점검한다.", note: focus.cause },
+    { tag: "조작", action: workAction.action, note: workAction.note },
+    { tag: "확인", action: "조립 전 체결면, 방향성, 이물질, 공구 회수, 보호커버 복구 상태를 확인한다.", note: "분해 부위는 체결 순서와 토크 편차를 확인하고 미체결 지점이 없도록 표시" },
+    { tag: "조작", action: "시운전 또는 운전 복귀를 단계적으로 수행한다.", note: "급격한 부하 투입을 피하고 초기 5~10분 동안 이상음, 진동, 누설, 온도 상승을 관찰" },
+    { tag: "측정", action: "작업 후 운전값을 재측정하고 작업 전 기준값과 비교한다.", note: "전류, 압력, 온도, 진동, 유량 등 핵심값이 정상 범위 또는 개선 방향인지 확인" },
+    { tag: "확인", action: "운전부서에 결과를 인계하고 후속 관찰 기준을 등록한다.", note: focus.recovery },
+    { tag: "확인", action: "원인, 조치내용, 교체품, 측정값, 잔여 리스크, 다음 점검일을 결과지에 기록한다.", note: "유사작업 분석과 SOP 개정 재료로 활용할 수 있게 구체적으로 남김" },
+  ];
+}
+
 function generateDraft(form) {
-  const riskItems = form.risks.map((risk) => ({
+  const risks = Array.isArray(form.risks) ? form.risks : [];
+  const selectedPpe = normalizePpeSelection(form.ppe).length ? normalizePpeSelection(form.ppe) : getRecommendedPpeForRisks(risks);
+  const riskItems = risks.map((risk) => ({
     risk,
     check: riskLibrary[risk]?.check || `${risk} 관련 위험요인을 확인한다.`,
     control: riskLibrary[risk]?.control || `${risk} 위험 저감 조치를 완료한다.`,
+    ppe: (PPE_BY_RISK[risk] || selectedPpe).join(", "),
   }));
 
-  const ppe = [...new Set(form.risks.map((risk) => riskLibrary[risk]?.ppe).filter(Boolean))];
-  const tools = [...splitText(form.toolsText), ...ppe].filter(Boolean);
+  const tools = [...splitText(form.toolsText), ...selectedPpe].filter(Boolean);
   const spares = splitText(form.sparesText);
 
   return {
@@ -472,25 +589,16 @@ function generateDraft(form) {
       { item: "운전 영향", criteria: `${form.shutdownMode}. 운전부서와 전환/정지 시점 및 복구 기준을 합의한다.` },
       { item: "작업허가", criteria: `${form.permit} 적용 여부를 확인하고 허가서 조건을 작업 전에 공유한다.` },
       { item: "LOTO", criteria: `${form.loto}. 전기/압력/자동기동 등 잔류에너지 차단 범위를 명확히 한다.` },
+      { item: "필수 보호구", criteria: selectedPpe.length ? `${selectedPpe.join(", ")} 착용 상태를 TBM에서 확인한다.` : "현장 위험성 평가에 따라 필수 보호구를 지정한다." },
       { item: "예비품", criteria: spares.length ? `${spares.join(", ")} 보유 여부와 규격 일치 여부를 확인한다.` : "필요 예비품과 대체 가능 여부를 확인한다." },
       { item: "중단 권한", criteria: "현장 조건이 표준서와 다르거나 위험이 증가하면 작업자가 즉시 중단할 수 있다." },
     ],
     safetyRisks: riskItems,
     tools,
-    steps: [
-      { tag: "확인", action: "작업 요청 내용과 최근 운전 이력을 확인한다.", note: form.operationState || "운전 상태, 알람, 이전 조치 이력을 확인" },
-      { tag: "확인", action: "현장 설비 TAG와 작업 대상 범위를 대조한다.", note: form.tag ? `${form.tag} 대상 여부 확인` : "동일 계통 설비 오인 방지" },
-      { tag: "안전주의", action: "운전부서와 정지/전환/복구 조건을 협의한다.", note: form.shutdownMode },
-      { tag: "안전주의", action: "작업허가, LOTO, 보호구 착용 상태를 확인한다.", note: `${form.permit} / LOTO ${form.loto}` },
-      { tag: "측정", action: "초기 상태를 측정하고 사진 또는 수치로 기록한다.", note: "전류, 온도, 진동, 압력, 누설 상태" },
-      { tag: "조작", action: "점검 범위 내에서 분해, 조정, 윤활, 체결 확인 등 필요한 조치를 수행한다.", note: "원인 불명 시 임의 조립/가공 금지" },
-      { tag: "확인", action: "조립 전 이물질, 방향성, 체결상태, 보호커버 복구 여부를 확인한다.", note: "공구와 자재 회수 포함" },
-      { tag: "측정", action: "시운전 후 운전값을 재측정하고 작업 전 상태와 비교한다.", note: "이상음, 진동, 온도, 전류, 누설 확인" },
-      { tag: "확인", action: "운전부서에 결과를 인계하고 후속 점검 필요 여부를 등록한다.", note: "재발 가능성 및 관찰 주기 명시" },
-    ],
+    steps: makeDetailedProcedureSteps(form, spares, selectedPpe),
     inspectionCriteria: makeDefaultInspection(form),
     stopCriteria: [
-      ...form.risks.map((risk) => riskLibrary[risk]?.stop).filter(Boolean),
+      ...risks.map((risk) => riskLibrary[risk]?.stop).filter(Boolean),
       "작업 대상 설비 TAG 또는 차단 범위가 불명확한 경우",
       "누설, 이상진동, 이상음, 온도 또는 전류가 작업 전보다 악화되는 경우",
       "예비품 규격이 불일치하거나 임시조치 승인 기준이 없는 경우",
@@ -568,10 +676,24 @@ function normalizeSystemValue(value) {
   return LEGACY_SYSTEM_LABELS[value] || value || "기타";
 }
 
+function normalizePpeSelection(value) {
+  return [...new Set((Array.isArray(value) ? value : []).filter((item) => PPE_OPTIONS.includes(item)))];
+}
+
+function getRecommendedPpeForRisks(risks = []) {
+  const selected = new Set(["안전모", "안전화"]);
+  risks.forEach((risk) => {
+    (PPE_BY_RISK[risk] || []).forEach((item) => selected.add(item));
+  });
+  return PPE_OPTIONS.filter((item) => selected.has(item));
+}
+
 function normalizeFormValues(form) {
   const next = { ...form };
   next.workType = normalizeWorkType(next.workType, next.title);
   next.system = normalizeSystemValue(next.system);
+  next.risks = Array.isArray(next.risks) ? next.risks.filter((risk) => RISK_OPTIONS.includes(risk)) : [];
+  next.ppe = Array.isArray(next.ppe) ? normalizePpeSelection(next.ppe) : getRecommendedPpeForRisks(next.risks);
   return next;
 }
 
@@ -670,6 +792,7 @@ function buildStandardFromWorkGroup(group) {
     operationState: symptoms.join("\n"),
     purpose: `${group.label} 관련 반복 작업을 동일한 판단 기준과 절차로 수행하기 위해 표준화한다.`,
     risks,
+    ppe: getRecommendedPpeForRisks(risks),
     notes: `작업기록 ${records.length}건 기반 SOP 후보입니다.\n주요 원인: ${causes.join(" / ") || "추가 확인 필요"}\n주요 결과: ${results.join(" / ") || "추가 확인 필요"}`,
   });
   const generated = normalizeDraft(generateDraft(form));
@@ -683,7 +806,11 @@ function buildStandardFromWorkGroup(group) {
         ...generated.preChecks,
       ],
       steps: actions.length
-        ? actions.map((action) => ({ id: makeId(), tag: "조작", action, note: "작업기록 기반 후보 절차" }))
+        ? [
+            ...generated.steps.slice(0, 8),
+            ...actions.map((action) => ({ id: makeId(), tag: "조작", action, note: "작업기록 기반 후보 절차" })),
+            ...generated.steps.slice(-4),
+          ]
         : generated.steps,
       abnormalActions: [
         ...generated.abnormalActions,
@@ -786,6 +913,7 @@ function buildExampleStandards() {
       date: "2026-05-10",
       rev: override.rev || "Rev.01",
     };
+    form.ppe = Array.isArray(override.ppe) ? override.ppe : getRecommendedPpeForRisks(form.risks);
     return makeStandardRecord(form, normalizeDraft(generateDraft(form)), `example-${String(index + 1).padStart(2, "0")}`, {
       savedAt,
       summary: "예시 표준서 최초 등록",
@@ -802,6 +930,7 @@ function mergeExampleStandards(savedStandards) {
 function syncExistingExampleStandards(savedStandards) {
   return savedStandards.map((standard) => {
     const form = normalizeFormValues({ ...defaultForm, ...standard.form, rev: standard.rev || standard.form?.rev || "Rev.01" });
+    if (!Array.isArray(standard.form?.ppe)) form.ppe = getRecommendedPpeForRisks(form.risks);
     const draft = normalizeDraft(standard.draft || emptyDraft);
     return {
       ...standard,
@@ -953,6 +1082,81 @@ function RiskSelector({ selected, onToggle }) {
         <button key={risk} type="button" className={`risk-chip ${selected.includes(risk) ? "selected" : ""}`} onClick={() => onToggle(risk)}>
           {risk}
         </button>
+      ))}
+    </div>
+  );
+}
+
+function PpeCharacter({ selected }) {
+  const has = (item) => selected.includes(item);
+  return (
+    <div className="ppe-character-stage" aria-hidden="true">
+      <div className="ppe-character">
+        <div className="mascot-ear left" />
+        <div className="mascot-ear right" />
+        <div className="mascot-body" />
+        <div className="mascot-face">
+          <span className="mascot-eye left" />
+          <span className="mascot-eye right" />
+          <span className="mascot-mouth" />
+        </div>
+        <div className="mascot-arm left" />
+        <div className="mascot-arm right" />
+        <div className="mascot-tail" />
+        {has("안전모") && <div className="ppe-helmet" />}
+        {has("보안경") && (
+          <div className="ppe-goggles">
+            <span />
+            <span />
+          </div>
+        )}
+        {has("방진마스크") && <div className="ppe-mask" />}
+        {has("장갑") && (
+          <>
+            <div className="ppe-glove left" />
+            <div className="ppe-glove right" />
+          </>
+        )}
+        {has("안전화") && (
+          <>
+            <div className="ppe-boot left" />
+            <div className="ppe-boot right" />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PpeSelector({ selected, recommended, onToggle }) {
+  return (
+    <div className="ppe-panel">
+      <PpeCharacter selected={selected} />
+      <div className="ppe-control">
+        <div>
+          <div className="field-label">필수 안전보호구</div>
+          <p>작업에 필요한 보호구를 클릭하면 표준서, TBM, 체크리스트에 같이 반영됩니다.</p>
+        </div>
+        <div className="ppe-grid">
+          {PPE_OPTIONS.map((item) => (
+            <button key={item} type="button" className={`ppe-chip ${selected.includes(item) ? "selected" : ""}`} onClick={() => onToggle(item)}>
+              <span>{item}</span>
+              {recommended.includes(item) && <em>권장</em>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PpeBadgeList({ items }) {
+  const list = normalizePpeSelection(items);
+  if (!list.length) return <p className="doc-text">현장 위험성 평가에 따라 지정</p>;
+  return (
+    <div className="ppe-badge-list">
+      {list.map((item) => (
+        <span key={item}>{item}</span>
       ))}
     </div>
   );
@@ -1513,6 +1717,10 @@ function StandardDoc({ form, draft }) {
           {form.notes && <p className="doc-note">{form.notes}</p>}
         </DocSection>
 
+        <DocSection title="필수 안전보호구">
+          <PpeBadgeList items={form.ppe} />
+        </DocSection>
+
         <DocSection title="작업 전 판단 기준">
           <SimpleTable
             columns={["확인 항목", "판단 기준"]}
@@ -1522,8 +1730,8 @@ function StandardDoc({ form, draft }) {
 
         <DocSection title="주요 위험요인 및 안전조치">
           <SimpleTable
-            columns={["위험요인", "확인 내용", "조치"]}
-            rows={draft.safetyRisks.map((row) => [row.risk, row.check, row.control])}
+            columns={["위험요인", "확인 내용", "조치", "관련 보호구"]}
+            rows={draft.safetyRisks.map((row) => [row.risk, row.check, row.control, row.ppe || "-"])}
           />
         </DocSection>
 
@@ -1586,6 +1794,10 @@ function TbmDoc({ form, draft }) {
               <span>작업허가</span>
               <strong>{form.permit} · LOTO {form.loto}</strong>
             </div>
+            <div>
+              <span>필수 보호구</span>
+              <strong>{normalizePpeSelection(form.ppe).join(", ") || "-"}</strong>
+            </div>
           </div>
         </DocSection>
 
@@ -1594,6 +1806,7 @@ function TbmDoc({ form, draft }) {
             rows={[
               "작업 대상 설비 TAG와 차단 범위를 전원이 확인했다.",
               "운전부서와 정지, 전환, 복구 조건을 공유했다.",
+              `필수 보호구(${normalizePpeSelection(form.ppe).join(", ") || "현장 지정"}) 착용 상태를 확인했다.`,
               "작업 중단 기준과 즉시 보고 대상을 공유했다.",
               "필요 보호구, 공구, 예비품을 현장에서 확인했다.",
               "현장 조건이 변경되면 작업을 멈추고 재판단한다.",
@@ -1625,7 +1838,7 @@ function ChecklistDoc({ form, draft }) {
       <DocHeader form={form} docType="오늘 작업 체크리스트" />
       <div className="doc-body">
         <DocSection title="작업 전 체크">
-          <CheckRows rows={draft.preChecks.map((row) => `${row.item}: ${row.criteria}`)} />
+          <CheckRows rows={[`필수 보호구 착용: ${normalizePpeSelection(form.ppe).join(", ") || "현장 지정"}`, ...draft.preChecks.map((row) => `${row.item}: ${row.criteria}`)]} />
         </DocSection>
 
         <DocSection title="작업 절차 체크">
@@ -1894,6 +2107,7 @@ export default function App() {
   const isViewingPastRevision = Boolean(selectedRevisionRev && activeStandard && selectedRevisionRev !== activeStandard.rev);
   const visibleSystemOptions = form.system && !systemOptions.includes(form.system) ? [form.system, ...systemOptions] : systemOptions;
   const workGroups = useMemo(() => buildWorkRecordGroups(workRecords, standards), [workRecords, standards]);
+  const recommendedPpe = useMemo(() => getRecommendedPpeForRisks(form.risks), [form.risks]);
   const needsLogin = isSupabaseConfigured && authReady && !session?.user?.id;
 
   const sendAuthLink = async () => {
@@ -1932,9 +2146,23 @@ export default function App() {
   };
 
   const toggleRisk = (risk) => {
+    setForm((prev) => {
+      const currentRisks = Array.isArray(prev.risks) ? prev.risks : [];
+      const currentPpe = normalizePpeSelection(prev.ppe);
+      const isSelected = currentRisks.includes(risk);
+      return {
+        ...prev,
+        risks: isSelected ? currentRisks.filter((item) => item !== risk) : [...currentRisks, risk],
+        ppe: isSelected ? currentPpe : normalizePpeSelection([...currentPpe, ...(PPE_BY_RISK[risk] || [])]),
+      };
+    });
+    setSaveMessage("");
+  };
+
+  const togglePpe = (item) => {
     setForm((prev) => ({
       ...prev,
-      risks: prev.risks.includes(risk) ? prev.risks.filter((item) => item !== risk) : [...prev.risks, risk],
+      ppe: normalizePpeSelection(prev.ppe).includes(item) ? normalizePpeSelection(prev.ppe).filter((value) => value !== item) : [...normalizePpeSelection(prev.ppe), item],
     }));
     setSaveMessage("");
   };
@@ -2027,6 +2255,7 @@ export default function App() {
 
   const loadStandard = (standard, mode) => {
     const loadedForm = normalizeFormValues({ ...defaultForm, ...standard.form });
+    if (!Array.isArray(standard.form?.ppe)) loadedForm.ppe = getRecommendedPpeForRisks(loadedForm.risks);
     if (mode === "today") {
       loadedForm.date = new Date().toISOString().slice(0, 10);
     }
@@ -2049,6 +2278,7 @@ export default function App() {
 
   const loadRevision = (revision) => {
     const revisionForm = normalizeFormValues({ ...defaultForm, ...revision.form });
+    if (!Array.isArray(revision.form?.ppe)) revisionForm.ppe = getRecommendedPpeForRisks(revisionForm.risks);
     setForm(revisionForm);
     if (revisionForm.system && !systemOptions.includes(revisionForm.system)) {
       setSystemOptions((prev) => normalizeSystemOptions([revisionForm.system, ...prev]));
@@ -2309,6 +2539,8 @@ export default function App() {
               <RiskSelector selected={form.risks} onToggle={toggleRisk} />
             </div>
 
+            <PpeSelector selected={normalizePpeSelection(form.ppe)} recommended={recommendedPpe} onToggle={togglePpe} />
+
             <div className="panel-actions">
               <button type="button" className="button ghost" onClick={() => setCurrentStep(4)}>
                 이전
@@ -2334,6 +2566,10 @@ export default function App() {
               <div>
                 <span>위험요인</span>
                 <strong>{form.risks.length ? form.risks.join(", ") : "-"}</strong>
+              </div>
+              <div>
+                <span>보호구</span>
+                <strong>{normalizePpeSelection(form.ppe).length ? normalizePpeSelection(form.ppe).join(", ") : "-"}</strong>
               </div>
             </div>
 
